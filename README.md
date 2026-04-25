@@ -2,7 +2,6 @@
 
 VoxChord is a high-performance, real-time audio analysis platform that detects pitch from a microphone input and suggests musical harmonies in real-time. Designed with a cinematic UI/UX, it runs entirely in the browser using Web Audio Worklets for zero main-thread blocking and ultra-low latency.
 
-![VoxChord Hero](https://via.placeholder.com/1200x600/050508/FFFFFF?text=VoxChord+Real-time+Harmony+Engine)
 
 ## ✨ Features
 
