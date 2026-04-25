@@ -125,9 +125,9 @@ export default function HeroScene() {
       {/* Particle cloud */}
       <points>
         <bufferGeometry>
-          <bufferAttribute attach="attributes-position" count={COUNT} array={positions} itemSize={3} />
-          <bufferAttribute attach="attributes-aScale"   count={COUNT} array={scales}    itemSize={1} />
-          <bufferAttribute attach="attributes-aRandom"  count={COUNT} array={randoms}   itemSize={1} />
+          <bufferAttribute attach={"attributes-position" as any} args={[positions, 3]} />
+          <bufferAttribute attach={"attributes-aScale" as any}   args={[scales, 1]} />
+          <bufferAttribute attach={"attributes-aRandom" as any}  args={[randoms, 1]} />
         </bufferGeometry>
         <shaderMaterial
           ref={matRef}
