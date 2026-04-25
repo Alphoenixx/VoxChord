@@ -27,7 +27,6 @@ export class AudioEngine {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
-          latency: 0,
           sampleRate: 44100
         }
       });
