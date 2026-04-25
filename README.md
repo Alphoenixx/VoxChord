@@ -58,7 +58,3 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 - `src/components`: UI components organized by landing and session views.
 - `src/stores`: Global state management for audio, chords, and UI flow.
 - `public/worklets`: Low-level audio processing scripts running on dedicated threads.
-
-## 📄 License
-
-MIT License - Copyright (c) 2026 VoxChord Team
