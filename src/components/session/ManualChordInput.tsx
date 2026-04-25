@@ -23,7 +23,7 @@ export default function ManualChordInput({ onStartRecording, audioContext }: Man
     transposedChords, setTransposedChords,
     tapTimestamps, addTapTimestamp, resetTapTimestamps,
     timingMode, setTimingMode,
-    tempManualData, setSession
+    tempManualData, setSession, setTempManualData
   } = store;
 
   const [isPlaying, setIsPlaying] = useState(false);
