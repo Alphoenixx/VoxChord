@@ -77,11 +77,11 @@ export default function SessionScene() {
 
   useFrame((state) => {
     if (!matRef.current) return;
-    const { rms, pitchClass, voiced } = useAudioStore.getState();
+    const { confidence, pitchClass, voiced } = useAudioStore.getState();
 
     matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
 
-    const targetRMS = voiced ? Math.min(rms, 0.35) : 0;
+    const targetRMS = voiced ? Math.min(confidence, 1.0) * 0.35 : 0;
     matRef.current.uniforms.uRMS.value +=
       (targetRMS - matRef.current.uniforms.uRMS.value) * 0.06;
 

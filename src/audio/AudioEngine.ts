@@ -1,14 +1,4 @@
-import { AudioLatencyInfo } from '../stores/useAudioStore';
-
-export interface PitchData {
-  pitch: number;
-  midi: number;
-  pitchClass: number;
-  cents: number;
-  rms: number;
-  voiced: boolean;
-  stable: boolean;
-}
+import { AudioLatencyInfo, AudioEvent } from '../stores/useAudioStore';
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -16,7 +6,7 @@ export class AudioEngine {
   private source: MediaStreamAudioSourceNode | null = null;
   private stream: MediaStream | null = null;
 
-  async init(onPitchData: (data: PitchData) => void): Promise<AudioLatencyInfo> {
+  async init(onAudioEvent: (event: AudioEvent) => void): Promise<AudioLatencyInfo> {
     if (this.ctx) {
       await this.stop();
     }
@@ -40,7 +30,7 @@ export class AudioEngine {
       this.workletNode = new AudioWorkletNode(this.ctx, 'pitch-worklet');
 
       this.workletNode.port.onmessage = (event) => {
-        onPitchData(event.data);
+        onAudioEvent(event.data);
       };
 
       this.source.connect(this.workletNode);
@@ -71,6 +61,12 @@ export class AudioEngine {
       this.stream = null;
     }
   }
+
+  /** Expose the AudioContext for NoteBuffer timestamps and AudioRecorder decoding */
+  getContext(): AudioContext | null { return this.ctx; }
+
+  /** Expose the raw mic stream for AudioRecorder */
+  getStream(): MediaStream | null { return this.stream; }
 
   getLatency(): AudioLatencyInfo {
     if (!this.ctx) return { base: 0, output: 0, total: 0 };

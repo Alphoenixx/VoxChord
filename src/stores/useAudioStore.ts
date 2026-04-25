@@ -6,47 +6,94 @@ export interface AudioLatencyInfo {
   total: number;
 }
 
+export interface StableNoteEvent {
+  type: 'StableNoteEvent';
+  midi: number;
+  root: string;
+  octave: number;
+  cents: number;
+  frequency: number;
+  timestamp: number;
+  confidence: number;
+}
+
+export interface SilenceEvent {
+  type: 'SilenceEvent';
+  timestamp: number;
+  duration: number;
+}
+
+export type AudioEvent = StableNoteEvent | SilenceEvent;
+
 interface AudioState {
   isActive: boolean;
-  pitch: number;           // Hz, -1 if unvoiced
-  midi: number;
-  pitchClass: number;      // 0-11
-  noteName: string;        // "C", "C#", etc.
-  cents: number;           // ±50
-  rms: number;
+  
+  // Note data
   voiced: boolean;
-  stable: boolean;
+  pitchClass: number; // 0-11
+  noteName: string; // root
+  cents: number;
+  midi: number;
+  frequency: number;
+  octave: number;
+  confidence: number;
+  stable: boolean; // Always true if voiced now, kept for UI compatibility
+  
   latency: AudioLatencyInfo;
   
   // Actions
   setIsActive: (isActive: boolean) => void;
-  setAudioData: (data: Partial<AudioState>) => void;
+  handleAudioEvent: (event: AudioEvent) => void;
   setLatency: (latency: AudioLatencyInfo) => void;
 }
 
-const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-
 export const useAudioStore = create<AudioState>((set) => ({
   isActive: false,
-  pitch: -1,
-  midi: -1,
+  voiced: false,
   pitchClass: -1,
   noteName: "-",
   cents: 0,
-  rms: 0,
-  voiced: false,
+  midi: -1,
+  frequency: 0,
+  octave: -1,
+  confidence: 0,
   stable: false,
   latency: { base: 0, output: 0, total: 0 },
 
   setIsActive: (isActive) => set({ isActive }),
-  setAudioData: (data) => set((state) => {
-    let extra = {};
-    if (data.pitchClass !== undefined && data.pitchClass >= 0) {
-      extra = { noteName: noteNames[data.pitchClass] };
-    } else if (data.pitchClass === -1) {
-      extra = { noteName: "-" };
+  handleAudioEvent: (event) => set((state) => {
+    if (event.type === 'SilenceEvent') {
+      if (!state.voiced) return state; // already silent
+      return { ...state, voiced: false, stable: false, noteName: "-", pitchClass: -1, cents: 0, midi: -1, frequency: 0, octave: -1, confidence: 0 };
     }
-    return { ...state, ...data, ...extra };
+
+    const pitchClass = ((event.midi % 12) + 12) % 12;
+
+    if (
+      state.voiced &&
+      state.pitchClass === pitchClass &&
+      state.noteName === event.root &&
+      state.cents === event.cents &&
+      state.midi === event.midi &&
+      state.frequency === event.frequency &&
+      state.octave === event.octave &&
+      state.confidence === event.confidence
+    ) {
+      return state;
+    }
+
+    return {
+      ...state,
+      voiced: true,
+      stable: true,
+      pitchClass,
+      noteName: event.root,
+      cents: event.cents,
+      midi: event.midi,
+      frequency: event.frequency,
+      octave: event.octave,
+      confidence: event.confidence
+    };
   }),
   setLatency: (latency) => set({ latency }),
 }));

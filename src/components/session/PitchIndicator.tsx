@@ -1,7 +1,7 @@
 "use client";
 
 import { useAudioStore } from "@/stores/useAudioStore";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import clsx from "clsx";
 import { formatChordDisplay } from "@/utils/formatters";
 
@@ -15,21 +15,30 @@ export default function PitchIndicator() {
   const { noteName, cents, stable, voiced, pitchClass } = useAudioStore();
   const [displayCents, setDisplayCents] = useState(0);
 
+  const targetCentsRef = useRef(cents);
+  useEffect(() => {
+    targetCentsRef.current = cents;
+  }, [cents]);
+
   // Smooth interpolation for cents
   useEffect(() => {
     let raf: number;
     const animate = () => {
       setDisplayCents((prev) => {
-        const diff = cents - prev;
-        if (Math.abs(diff) < 0.3) return cents;
+        const target = targetCentsRef.current;
+        const diff = target - prev;
+        if (Math.abs(diff) < 0.3) return target;
         return prev + diff * 0.12;
       });
       raf = requestAnimationFrame(animate);
     };
-    if (voiced) animate();
-    else setDisplayCents(0);
+    if (voiced) {
+      raf = requestAnimationFrame(animate);
+    } else {
+      setDisplayCents(0);
+    }
     return () => cancelAnimationFrame(raf);
-  }, [cents, voiced]);
+  }, [voiced]);
 
   const centsPos    = Math.max(-50, Math.min(50, displayCents));
   const absCents    = Math.abs(centsPos);

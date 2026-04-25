@@ -32,9 +32,15 @@ export const useChordStore = create<ChordState>((set) => ({
   suggestions: [],
   history: [],
 
-  setDetectedKey: (key) => set({ detectedKey: key }),
-  overrideKey: (key) => set({ manualKeyOverride: key }),
-  setSuggestions: (suggestions) => set({ suggestions }),
+  setDetectedKey: (key) => set((state) => {
+    if (state.detectedKey?.key === key?.key && state.detectedKey?.mode === key?.mode) return state;
+    return { detectedKey: key };
+  }),
+  overrideKey: (key) => set((state) => state.manualKeyOverride === key ? state : { manualKeyOverride: key }),
+  setSuggestions: (suggestions) => set((state) => {
+    if (state.suggestions.length === suggestions.length && state.suggestions.every((s, i) => s.chord === suggestions[i].chord)) return state;
+    return { suggestions };
+  }),
   addToHistory: (chord) => set((state) => {
     // avoid consecutive duplicates
     if (state.history.length > 0 && state.history[state.history.length - 1].chord === chord) {
