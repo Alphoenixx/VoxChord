@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import InteractiveFeatureCard3D from "./InteractiveFeatureCard3D";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -40,9 +41,7 @@ function IconCompass({ className, style }: { className?: string; style?: React.C
   );
 }
 
-// ─── Feature Data ─────────────────────────────────────────────────────────────
-const ACCENT = "#8B5CF6"; // single unified accent
-
+// ─── Feature Data with enhanced colors ─────────────────────────────────────────
 const features = [
   {
     Icon: IconMic,
@@ -50,6 +49,7 @@ const features = [
     desc: "YIN pitch detection runs inside an AudioWorklet at an 11.6 ms hop rate — faster than human auditory perception can resolve.",
     stat: "11.6ms",
     statLabel: "Hop rate",
+    accent: "#9D4EDD",
   },
   {
     Icon: IconKeys,
@@ -57,6 +57,7 @@ const features = [
     desc: "Pre-computed diatonic tables rank every chord suggestion by root, third, fifth, and seventh voice-leading relationships.",
     stat: "O(1)",
     statLabel: "Lookup",
+    accent: "#C77DFF",
   },
   {
     Icon: IconCompass,
@@ -64,6 +65,7 @@ const features = [
     desc: "Krumhansl-Schmuckler profiles weighted with exponential decay across an 8-second rolling window track your key in real time.",
     stat: "24",
     statLabel: "Keys tracked",
+    accent: "#00D9FF",
   },
 ];
 
@@ -74,7 +76,6 @@ export default function FeaturesSection() {
   useEffect(() => {
     if (!containerRef.current) return;
     const heading = containerRef.current.querySelector(".section-heading");
-    const cards   = containerRef.current.querySelectorAll(".feature-card");
 
     gsap.fromTo(
       heading,
@@ -82,14 +83,6 @@ export default function FeaturesSection() {
       { y: 0, opacity: 1, filter: "blur(0px)", duration: 1.2, ease: "power3.out",
         scrollTrigger: { trigger: heading, start: "top 88%" } }
     );
-    cards.forEach((card, i) => {
-      gsap.fromTo(
-        card,
-        { y: 56, opacity: 0 },
-        { y: 0, opacity: 1, duration: 1.0, delay: i * 0.16, ease: "power3.out",
-          scrollTrigger: { trigger: card, start: "top 92%" } }
-      );
-    });
   }, []);
 
   return (
@@ -108,50 +101,19 @@ export default function FeaturesSection() {
         </p>
       </div>
 
-      {/* Cards — 3-column, no overflow */}
+      {/* Cards — 3-column with 3D interactive effects */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {features.map(({ Icon, title, desc, stat, statLabel }, i) => (
-          <div
+        {features.map(({ Icon, title, desc, stat, statLabel, accent }, i) => (
+          <InteractiveFeatureCard3D
             key={i}
-            className="feature-card group glass-card-strong flex flex-col transition-all duration-500 hover:-translate-y-1"
-            style={{ minWidth: 0 }} // prevent flex/grid overflow
-          >
-            <div className="flex flex-col flex-1 p-8 text-center items-center">
-
-              {/* Icon */}
-              <div
-                className="w-12 h-12 mb-7 rounded-2xl flex items-center justify-center flex-shrink-0"
-                style={{
-                  background: `${ACCENT}14`,
-                  border: `1px solid ${ACCENT}28`,
-                  boxShadow: `0 0 24px ${ACCENT}12`,
-                }}
-              >
-                <Icon className="w-5 h-5" style={{ color: ACCENT } as React.CSSProperties} />
-              </div>
-
-              {/* Title */}
-              <h3 className="font-display text-[15px] font-semibold tracking-[0.02em] text-white/90 mb-3 leading-snug">
-                {title}
-              </h3>
-
-              {/* Description */}
-              <p className="text-[13px] text-white/30 leading-[1.85] flex-1">
-                {desc}
-              </p>
-
-              {/* Stat */}
-              <div className="mt-8 pt-6 border-t border-white/[0.06] w-full flex flex-col items-center gap-1">
-                <span className="font-mono text-2xl font-bold" style={{ color: ACCENT }}>
-                  {stat}
-                </span>
-                <span className="text-[11px] font-mono text-white/25 tracking-[0.1em]">
-                  {statLabel}
-                </span>
-              </div>
-
-            </div>
-          </div>
+            Icon={Icon}
+            title={title}
+            desc={desc}
+            stat={stat}
+            statLabel={statLabel}
+            accent={accent}
+            index={i}
+          />
         ))}
       </div>
     </div>

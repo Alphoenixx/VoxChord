@@ -10,9 +10,9 @@ import Lenis from "lenis";
 import Link from "next/link";
 import { useScrollStore } from "@/stores/useScrollStore";
 
-import HeroScene from "@/components/landing/HeroScene";
+import EnhancedHeroScene from "@/components/landing/EnhancedHeroScene";
 import FeaturesSection from "@/components/landing/FeaturesSection";
-import HowItWorks from "@/components/landing/HowItWorks";
+import Pipeline3DNodes from "@/components/landing/Pipeline3DNodes";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -119,12 +119,12 @@ export default function LandingPage() {
 
       {/* ── Fixed 3D Canvas ── */}
       <div className="fixed inset-0 z-0">
-        <Canvas camera={{ position: [0, 0, 8], fov: 50 }} gl={{ antialias: true, alpha: true }} dpr={[1, 2]}>
-          <HeroScene />
+        <Canvas camera={{ position: [0, 0, 9.5], fov: 45 }} gl={{ antialias: true, alpha: true, logarithmicDepthBuffer: true }} dpr={[1, 2]}>
+          <EnhancedHeroScene />
           <EffectComposer>
-            <Bloom intensity={1.2} luminanceThreshold={0.5} luminanceSmoothing={0.9} mipmapBlur />
-            <ChromaticAberration offset={[0.0005, 0.0005] as any} blendFunction={BlendFunction.NORMAL} />
-            <Vignette eskil={false} offset={0.35} darkness={1.2} />
+            <Bloom intensity={1.6} luminanceThreshold={0.3} luminanceSmoothing={0.85} mipmapBlur />
+            <ChromaticAberration offset={[0.0008, 0.0008] as any} blendFunction={BlendFunction.NORMAL} />
+            <Vignette eskil={false} offset={0.4} darkness={1.4} />
           </EffectComposer>
         </Canvas>
       </div>
@@ -200,7 +200,7 @@ export default function LandingPage() {
         <section id="how-it-works"
           className="relative w-full bg-[#050508] flex flex-col items-center"
           style={{ paddingTop: "48px", paddingBottom: "48px" }}>
-          <HowItWorks />
+          <Pipeline3DNodes />
         </section>
 
         {/* ━━━━ SECTION DIVIDER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
