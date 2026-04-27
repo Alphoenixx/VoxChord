@@ -1,0 +1,2503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoxChord — Real-Time Chord Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@100;300;400;700&family=JetBrains+Mono:wght@300;400&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@100;300;400;700&family=JetBrains+Mono:wght@300;400&display=swap"></noscript>
+<style>
+/* ═══════════════════════════════════════
+   DESIGN SYSTEM
+═══════════════════════════════════════ */
+:root {
+  --bg:           #050508;
+  --violet:       #7C3AED;
+  --cyan:         #06B6D4;
+  --white:        #F8FAFC;
+  --muted:        #CBD5E1;
+  --glass:        rgba(255,255,255,0.03);
+  --glass-border: rgba(255,255,255,0.06);
+  --glow:         rgba(139, 92, 246, 0.45);
+  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit:     cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--white);
+  font-family: 'Space Grotesk', sans-serif;
+  overflow-x: hidden;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Base overflow hidden until sequence complete ── */
+body.locked { overflow: hidden; height: 100vh; }
+
+/* ═══════════════════════════════════════
+   THREE.JS CANVAS LAYER (z:0)
+═══════════════════════════════════════ */
+#mount {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100vw;
+  height: 100vh;
+}
+#mount canvas { display: block; width: 100% !important; height: 100% !important; }
+
+/* ═══════════════════════════════════════
+   UI ROOT (z:10)
+═══════════════════════════════════════ */
+#ui-root {
+  position: relative;
+  z-index: 10;
+  pointer-events: none;
+}
+#ui-root * { pointer-events: auto; }
+
+/* ═══════════════════════════════════════
+   VOICE CRACK OVERLAY (z:20)
+═══════════════════════════════════════ */
+#crack-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  pointer-events: auto;
+  will-change: opacity;
+}
+
+#voxchord-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 100;
+  font-size: clamp(3rem, 10vw, 8rem);
+  letter-spacing: 0.4em;
+  color: var(--white);
+  text-shadow: 0 0 60px rgba(124, 58, 237, 0.4);
+  text-indent: 0.4em; /* optical compensation for letter-spacing */
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation: titleFadeIn 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes titleFadeIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+#crack-subtitle {
+  margin-top: 32px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 300;
+  font-size: 11px;
+  letter-spacing: 0.25em;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.6s var(--ease-entrance);
+}
+
+#crack-subtitle.visible { opacity: 1; }
+
+#grant-btn {
+  margin-top: 32px;
+  padding: 14px 40px;
+  background: transparent;
+  border: 1px solid rgba(124, 58, 237, 0.4);
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  color: var(--white);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    border-color 0.4s var(--ease-entrance),
+    box-shadow   0.4s var(--ease-entrance),
+    letter-spacing 0.4s var(--ease-entrance),
+    opacity 0.6s var(--ease-entrance),
+    transform 0.3s var(--ease-entrance);
+  text-indent: 0.3em;
+  position: relative;
+  overflow: hidden;
+}
+
+#grant-btn.visible { opacity: 1; }
+
+#grant-btn:hover {
+  border-color: var(--violet);
+  box-shadow: 0 0 24px rgba(124, 58, 237, 0.3),
+              inset 0 0 24px rgba(124, 58, 237, 0.05);
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;
+}
+
+#grant-btn:active {
+  transform: translateY(1px) scale(0.97);
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.2);
+  transition: transform 0.1s var(--ease-exit),
+              box-shadow 0.1s var(--ease-exit);
+}
+
+#mic-error {
+  margin-top: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  color: rgba(239, 68, 68, 0.7);
+  opacity: 0;
+  transition: opacity 0.4s var(--ease-entrance);
+}
+#mic-error.visible { opacity: 1; }
+
+/* ═══════════════════════════════════════
+   SCROLL CONTAINER
+═══════════════════════════════════════ */
+#scroll-container {
+  position: relative;
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#scroll-container.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ═══════════════════════════════════════
+   SECTION BASE
+═══════════════════════════════════════ */
+.section {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ═══════════════════════════════════════
+   SECTION 0 — HERO (post-crack)
+═══════════════════════════════════════ */
+#hero {
+  min-height: 100vh;
+  flex-direction: column;
+  text-align: center;
+  padding: 0 24px;
+  position: relative;
+}
+
+/* Dark radial vignette scrim behind hero text — keeps text legible over 3D canvas */
+#hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 70% 60% at 50% 50%,
+    rgba(5, 5, 8, 0.72) 0%,
+    rgba(5, 5, 8, 0.45) 55%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+#hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 24px;
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+.hero-label-line {
+  width: 32px;
+  height: 1px;
+  background: rgba(124, 58, 237, 0.8);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 0.4s var(--ease-entrance);
+}
+
+.hero-label span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.35em;
+  color: rgba(124, 58, 237, 0.8);
+  text-indent: 0.35em;
+}
+
+.hero-headline {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 100;
+  font-size: clamp(3.5rem, 9vw, 7.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  color: var(--white);
+  margin-bottom: 24px;
+}
+
+.hero-headline .word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(24px);
+  will-change: transform, opacity;
+  text-shadow:
+    0 2px 40px rgba(5, 5, 8, 0.95),
+    0 0 80px rgba(5, 5, 8, 0.8);
+}
+
+.hero-headline br { display: block; height: 0; }
+
+.hero-sub {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 400;
+  font-size: 18px;
+  color: var(--muted);
+  max-width: 480px;
+  margin: 0 auto;
+  line-height: 1.65;
+  opacity: 0;
+  transform: translateY(24px);
+  will-change: transform, opacity;
+}
+
+.hero-ctas {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 48px;
+  flex-wrap: wrap;
+  opacity: 0;
+  transform: translateY(24px);
+  will-change: transform, opacity;
+}
+
+/* ═══════════════════════════════════════
+   BUTTON SYSTEM
+═══════════════════════════════════════ */
+.btn-primary {
+  position: relative;
+  overflow: hidden;
+  padding: 16px 48px;
+  background: linear-gradient(135deg, var(--violet), var(--cyan));
+  color: white;
+  border: none;
+  border-radius: 2px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition:
+    transform 0.3s var(--ease-entrance),
+    box-shadow 0.3s var(--ease-entrance);
+  text-indent: 0.1em;
+}
+
+.btn-primary::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg,
+    transparent,
+    rgba(255,255,255,0.3),
+    transparent);
+  transform: skewX(-20deg);
+  transition: none;
+  pointer-events: none;
+}
+
+.btn-primary:hover::after {
+  animation: shimmer 0.6s var(--ease-entrance) forwards;
+}
+
+@keyframes shimmer {
+  0%   { left: -100%; }
+  100% { left: 200%; }
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(124, 58, 237, 0.4);
+}
+
+.btn-primary:active {
+  transform: translateY(0px) scale(0.98) !important;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.2) !important;
+  transition: transform 0.1s var(--ease-exit),
+              box-shadow 0.1s var(--ease-exit) !important;
+}
+
+.btn-ghost {
+  padding: 16px 48px;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 2px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    border-color 0.3s var(--ease-entrance),
+    color 0.3s var(--ease-entrance),
+    transform 0.3s var(--ease-entrance);
+  text-indent: 0.1em;
+}
+
+.btn-ghost:hover {
+  border-color: rgba(255,255,255,0.3);
+  color: var(--white);
+  transform: translateY(-2px);
+}
+
+.btn-ghost:active {
+  transform: translateY(1px) scale(0.97);
+  transition: transform 0.1s var(--ease-exit);
+}
+
+/* ═══════════════════════════════════════
+   LANDING PARTICLE LAYER (CSS dots behind title)
+═══════════════════════════════════════ */
+#particle-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.lp {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+
+/* ═══════════════════════════════════════
+   SCROLL INDICATOR
+═══════════════════════════════════════ */
+#scroll-indicator {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 15;
+  opacity: 0;
+  transition: opacity 0.6s var(--ease-entrance);
+  pointer-events: none;
+}
+
+#scroll-indicator.visible { opacity: 1; }
+#scroll-indicator.hidden  { opacity: 0 !important; transition: opacity 0.4s var(--ease-exit); }
+
+.scroll-line-wrap {
+  position: relative;
+  width: 1px;
+  height: 40px;
+  overflow: hidden;
+}
+
+.scroll-line-track {
+  position: absolute;
+  inset: 0;
+  background: var(--violet);
+  animation: lineBreath 2s ease-in-out infinite;
+}
+
+@keyframes lineBreath {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.8; }
+}
+
+.scroll-dot {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--white);
+  animation: dotTravel 1.8s linear infinite;
+}
+
+@keyframes dotTravel {
+  0%   { top: 0;    opacity: 1; }
+  80%  { top: 100%; opacity: 0.2; }
+  81%  { top: 0;    opacity: 0; }
+  100% { top: 0;    opacity: 1; }
+}
+
+.scroll-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: var(--muted);
+  text-indent: 0.3em;
+}
+
+/* ═══════════════════════════════════════
+   SECTION 1 — YOUR VOICE DECODED
+═══════════════════════════════════════ */
+#section-1 {
+  min-height: 100vh;
+  padding: 80px 8vw;
+  display: grid;
+  grid-template-columns: 55% 45%;
+  align-items: center;
+  position: relative;
+}
+
+/* Gradient scrim on the right side where text lives */
+#section-1::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(5, 5, 8, 0.65) 55%,
+    rgba(5, 5, 8, 0.80) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+#section-1 > * {
+  position: relative;
+  z-index: 1;
+}
+
+.s1-spacer { /* left column — 3D scene shows through */ }
+
+.s1-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-left: 48px;
+}
+
+.overline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.4em;
+  color: rgba(124, 58, 237, 0.6);
+  text-indent: 0.4em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+  opacity: 0;
+  transform: translateX(32px);
+}
+
+.overline-line {
+  width: 24px;
+  height: 1px;
+  background: rgba(124, 58, 237, 0.6);
+  transform-origin: left;
+  transform: scaleX(0);
+  flex-shrink: 0;
+}
+
+.s1-headline {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 100;
+  font-size: clamp(2.5rem, 6vw, 5rem);
+  line-height: 1.0;
+  color: var(--white);
+  margin-bottom: 32px;
+  opacity: 0;
+  transform: translateX(32px);
+  text-shadow: 0 2px 30px rgba(5, 5, 8, 0.85);
+}
+
+.s1-stat-wrap {
+  margin-bottom: 8px;
+  opacity: 0;
+  transform: translateX(32px);
+}
+
+.s1-stat {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: clamp(3rem, 8vw, 6rem);
+  background: linear-gradient(135deg, var(--violet), var(--cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+
+.s1-stat-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  margin-top: 4px;
+  text-indent: 0.2em;
+}
+
+.s1-body {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 300;
+  font-size: 16px;
+  color: var(--muted);
+  max-width: 360px;
+  margin-top: 24px;
+  line-height: 1.7;
+  opacity: 0;
+  transform: translateX(32px);
+}
+
+/* ═══════════════════════════════════════
+   SECTION 2 — THE INTELLIGENCE
+═══════════════════════════════════════ */
+#section-2 {
+  min-height: 100vh;
+  padding: 80px 8vw;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+/* Soft dark vignette so the animated torus doesn't fight the cards */
+#section-2::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 80% 70% at 50% 50%,
+    rgba(5, 5, 8, 0.68) 0%,
+    rgba(5, 5, 8, 0.35) 65%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+#section-2 > * {
+  position: relative;
+  z-index: 1;
+}
+
+.s2-headline {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 100;
+  font-size: clamp(2rem, 5vw, 4rem);
+  text-align: center;
+  color: var(--white);
+  margin-bottom: 64px;
+  opacity: 0;
+  transform: translateY(24px);
+  text-shadow: 0 2px 40px rgba(5, 5, 8, 0.9), 0 0 60px rgba(5, 5, 8, 0.7);
+}
+
+.cards-row {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.glass-card {
+  background: rgba(5, 5, 14, 0.72);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 16px;
+  backdrop-filter: blur(32px) saturate(1.2);
+  -webkit-backdrop-filter: blur(32px) saturate(1.2);
+  padding: 32px;
+  width: 280px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    0 0 40px rgba(5, 5, 8, 0.6),
+    0 0 0 1px rgba(124, 58, 237, 0.04);
+  opacity: 0;
+  will-change: transform, opacity;
+  transition:
+    transform 0.4s var(--ease-entrance),
+    box-shadow 0.4s var(--ease-entrance),
+    border-color 0.4s var(--ease-entrance);
+  cursor: default;
+}
+
+.glass-card:hover {
+  transform: translateY(-8px) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.1),
+    0 20px 60px rgba(124, 58, 237, 0.15),
+    0 0 0 1px rgba(124, 58, 237, 0.2);
+  border-color: rgba(255,255,255,0.1);
+}
+
+.card-icon {
+  width: 48px;
+  height: 32px;
+  margin-bottom: 20px;
+}
+
+.card-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 18px;
+  font-weight: 400;
+  color: var(--white);
+  margin-bottom: 12px;
+  line-height: 1.3;
+}
+
+.card-body {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 300;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+/* ═══════════════════════════════════════
+   SECTION 3 — THE PIPELINE
+═══════════════════════════════════════ */
+#section-3 {
+  min-height: 100vh;
+  padding: 80px 8vw;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+#section-3::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 60% 50% at 50% 50%,
+    rgba(5, 5, 8, 0.70) 0%,
+    rgba(5, 5, 8, 0.30) 65%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+#section-3 > * {
+  position: relative;
+  z-index: 1;
+}
+
+.s3-overline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: rgba(124, 58, 237, 0.6);
+  text-align: center;
+  text-indent: 0.4em;
+  margin-bottom: 32px;
+  opacity: 0;
+}
+
+.s3-pipeline {
+  width: 60vw;
+  max-width: 800px;
+  min-width: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin-bottom: 56px;
+}
+
+.pipeline-track {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.pipeline-node {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition:
+    background 0.3s var(--ease-entrance),
+    border-color 0.3s var(--ease-entrance),
+    box-shadow 0.3s var(--ease-entrance),
+    transform 0.3s var(--ease-spring);
+}
+
+.pipeline-node.active {
+  background: radial-gradient(circle, rgba(124,58,237,0.3), transparent);
+  border-color: rgba(124, 58, 237, 0.6);
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.4);
+  transform: scale(1.15);
+}
+
+.pipeline-node-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  transition: color 0.3s;
+}
+
+.pipeline-node.active .pipeline-node-num { color: var(--white); }
+
+.pipeline-node-label {
+  position: absolute;
+  bottom: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  white-space: nowrap;
+  text-indent: 0.2em;
+  transition: color 0.3s;
+}
+
+.pipeline-node.active .pipeline-node-label { color: rgba(124, 58, 237, 0.8); }
+
+.pipeline-beam {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg,
+    rgba(124,58,237,0.6), rgba(6,182,212,0.6));
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 0.4s var(--ease-entrance);
+}
+
+.pipeline-beam.lit { transform: scaleX(1); }
+
+.s3-caption {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 300;
+  font-size: clamp(1.5rem, 4vw, 3rem);
+  text-align: center;
+  color: var(--white);
+  opacity: 0;
+  transition: opacity 0.6s var(--ease-entrance);
+  margin-top: 48px;
+  text-shadow: 0 2px 40px rgba(5, 5, 8, 0.9);
+}
+
+.s3-caption.visible { opacity: 1; }
+
+/* ═══════════════════════════════════════
+   SECTION 4 — THE EXPERIENCE
+═══════════════════════════════════════ */
+#section-4 {
+  min-height: 100vh;
+  padding: 80px 24px;
+  flex-direction: column;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Full-section dark vignette — strongest in the center where the torus sits */
+#section-4::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 55% 40% at 50% 62%,
+      rgba(5, 5, 8, 0.88) 0%,
+      rgba(5, 5, 8, 0.60) 45%,
+      transparent 100%
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+
+#section-4 > * {
+  position: relative;
+  z-index: 1;
+}
+
+.experience-orb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(
+    circle,
+    rgba(124, 58, 237, 0.12) 0%,
+    transparent 70%);
+  border-radius: 50%;
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+  animation: orbPulse 4s ease-in-out infinite;
+}
+
+@keyframes orbPulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+  50%       { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
+}
+
+.experience-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.s4-overline {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.4em;
+  color: rgba(124, 58, 237, 0.6);
+  text-indent: 0.4em;
+  margin-bottom: 32px;
+  opacity: 0;
+}
+
+.s4-headline {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 100;
+  font-size: clamp(3rem, 8vw, 7rem);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  color: var(--white);
+  margin-bottom: 32px;
+}
+
+.s4-headline .word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(32px);
+  will-change: transform, opacity;
+  text-shadow: 0 2px 40px rgba(5, 5, 8, 0.9), 0 0 60px rgba(5, 5, 8, 0.7);
+}
+
+.s4-headline .word.glow {
+  text-shadow: 0 0 40px rgba(124, 58, 237, 0.6),
+               0 0 80px rgba(6, 182, 212, 0.3);
+}
+
+.s4-body {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 300;
+  font-size: 18px;
+  color: var(--muted);
+  max-width: 420px;
+  margin: 0 auto 48px;
+  line-height: 1.8;
+  opacity: 0;
+  transform: translateY(24px);
+  /* frosted pill so torus glow doesn't bleed through the paragraph */
+  background: rgba(5, 5, 8, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 20px 28px;
+  border-radius: 12px;
+}
+
+/* ═══════════════════════════════════════
+   MAGNETIC CTA BUTTON
+═══════════════════════════════════════ */
+.btn-magnetic-wrap {
+  position: relative;
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+.btn-magnetic {
+  position: relative;
+  overflow: hidden;
+  padding: 20px 64px;
+  background: linear-gradient(135deg, var(--violet), var(--cyan));
+  color: white;
+  border: none;
+  border-radius: 2px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.15em;
+  text-indent: 0.15em;
+  cursor: pointer;
+  transition:
+    transform 0.6s var(--ease-spring),
+    box-shadow 0.3s var(--ease-entrance),
+    scale 0.3s var(--ease-entrance);
+  will-change: transform;
+}
+
+.btn-magnetic::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg,
+    rgba(255,255,255,0.15),
+    transparent);
+  opacity: 0;
+  transition: opacity 0.3s var(--ease-entrance);
+  pointer-events: none;
+}
+
+.btn-magnetic:hover {
+  box-shadow:
+    0 0 0 1px rgba(124, 58, 237, 0.4),
+    0 16px 48px rgba(124, 58, 237, 0.35),
+    0 0 80px rgba(6, 182, 212, 0.15);
+  scale: 1.02;
+}
+
+.btn-magnetic:hover::after { opacity: 1; }
+
+.btn-magnetic:active {
+  scale: 0.97 !important;
+  box-shadow:
+    0 0 0 1px rgba(124, 58, 237, 0.6),
+    0 0 40px rgba(124, 58, 237, 0.5) !important;
+  transition:
+    scale 0.1s var(--ease-exit),
+    box-shadow 0.1s var(--ease-exit),
+    transform 0.6s var(--ease-spring) !important;
+}
+
+/* ═══════════════════════════════════════
+   FOOTER
+═══════════════════════════════════════ */
+footer {
+  position: relative;
+  height: 120px;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 8vw;
+}
+
+.footer-rule {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.footer-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  color: var(--muted);
+  text-indent: 0.25em;
+}
+
+.footer-star {
+  position: absolute;
+  right: 0;
+  opacity: 0.4;
+  animation: starSpin 4s linear infinite;
+}
+
+@keyframes starSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(90deg); }
+}
+
+/* ═══════════════════════════════════════
+   PAGE TRANSITION OVERLAY
+═══════════════════════════════════════ */
+#transition-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: radial-gradient(
+    circle at center,
+    rgba(124, 58, 237, 0.9) 0%,
+    rgba(6, 182, 212, 0.7) 40%,
+    #050508 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1.2s var(--ease-entrance);
+}
+
+#transition-overlay.active {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════
+   SINE WAVE CARD ICON ANIMATION
+═══════════════════════════════════════ */
+.wave-path {
+  animation: waveScroll 2s linear infinite;
+}
+
+@keyframes waveScroll {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -60; }
+}
+
+/* ═══════════════════════════════════════
+   MOBILE FALLBACK (< 768px)
+═══════════════════════════════════════ */
+@media (max-width: 767px) {
+  /* Hide canvas, replace with gradient bg */
+  #mount { display: none; }
+
+  body {
+    background:
+      radial-gradient(ellipse at 20% 50%, rgba(124,58,237,0.15) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 50%, rgba(6,182,212,0.12) 0%, transparent 50%),
+      var(--bg);
+  }
+
+  /* Layout overrides */
+  #section-1 {
+    grid-template-columns: 1fr;
+    padding: 80px 24px;
+  }
+  .s1-spacer { display: none; }
+  .s1-content { padding-left: 0; }
+
+  .s3-pipeline { width: 90vw; }
+  .pipeline-node-label { font-size: 7px; }
+
+  .experience-orb { width: 300px; height: 300px; }
+
+  /* Disable GSAP pinning on mobile — set via JS */
+}
+</style>
+</head>
+<body class="locked">
+
+<!-- THREE.JS CANVAS -->
+<div id="mount"></div>
+
+<!-- CSS PARTICLE LAYER (visible during loading and landing) -->
+<div id="particle-overlay"></div>
+
+<!-- UI ROOT -->
+<div id="ui-root">
+
+  <!-- VOICE CRACK OVERLAY -->
+  <div id="crack-overlay">
+    <div id="voxchord-title">VOXCHORD</div>
+    <div id="crack-subtitle">click to explore</div>
+    <button id="grant-btn">ENTER</button>
+  </div>
+
+  <!-- SCROLL CONTENT (hidden until after crack sequence) -->
+  <div id="scroll-container">
+
+    <!-- SECTION 0: HERO -->
+    <section id="hero" class="section">
+      <div>
+        <div class="hero-label" id="hero-label">
+          <div class="hero-label-line" id="hero-label-line"></div>
+          <span>REAL-TIME CHORD DETECTION</span>
+        </div>
+        <h1 class="hero-headline">
+          <span class="word">Sing.</span><br>
+          <span class="word">The chords</span><br>
+          <span class="word">find you.</span>
+        </h1>
+        <p class="hero-sub" id="hero-sub">
+          VoxChord listens as you sing and surfaces the exact chords to play along — in real time.
+        </p>
+        <div class="hero-ctas" id="hero-ctas">
+          <button class="btn-primary" id="hero-cta-primary">Start Playing</button>
+          <button class="btn-ghost" id="hero-cta-ghost">See How It Works</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 1: YOUR VOICE DECODED -->
+    <section id="section-1" class="section">
+      <div class="s1-spacer"></div>
+      <div class="s1-content">
+        <div class="overline" id="s1-overline">
+          <div class="overline-line" id="s1-overline-line"></div>
+          <span>01 / DETECTION</span>
+        </div>
+        <div class="s1-headline" id="s1-headline">Your voice.<br>Decoded.</div>
+        <div class="s1-stat-wrap" id="s1-stat-wrap">
+          <div class="s1-stat" id="s1-stat">0ms</div>
+          <div class="s1-stat-label">average detection latency</div>
+        </div>
+        <p class="s1-body" id="s1-body">
+          Every note you sing carries a universe of harmonic information.
+          VoxChord's YIN algorithm decodes it before you can feel the delay.
+        </p>
+      </div>
+    </section>
+
+    <!-- SECTION 2: THE INTELLIGENCE -->
+    <section id="section-2" class="section">
+      <h2 class="s2-headline" id="s2-headline">The Intelligence</h2>
+      <div class="cards-row">
+        <!-- Card 1: YIN Algorithm -->
+        <div class="glass-card" id="card-1">
+          <svg class="card-icon" viewBox="0 0 48 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="violetCyanGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%"   stop-color="#7C3AED"/>
+                <stop offset="100%" stop-color="#06B6D4"/>
+              </linearGradient>
+              <linearGradient id="vcg2" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%"   stop-color="#7C3AED"/>
+                <stop offset="100%" stop-color="#06B6D4"/>
+              </linearGradient>
+            </defs>
+            <path class="wave-path"
+              d="M0 16 C6 16 6 6 12 6 C18 6 18 26 24 26 C30 26 30 6 36 6 C42 6 42 26 48 26"
+              stroke="url(#violetCyanGradient)"
+              stroke-width="1.5"
+              fill="none"
+              stroke-dasharray="60 120"
+            />
+          </svg>
+          <div class="card-title">YIN Algorithm</div>
+          <p class="card-body">
+            Autocorrelation-based pitch detection. Finds your fundamental
+            frequency with near-zero error rate.
+          </p>
+        </div>
+
+        <!-- Card 2: Key Profiles -->
+        <div class="glass-card" id="card-2">
+          <svg class="card-icon" viewBox="0 0 48 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Staff lines -->
+            <line x1="0" y1="8"  x2="48" y2="8"  stroke="url(#vcg2)" stroke-width="0.8" opacity="0.5"/>
+            <line x1="0" y1="13" x2="48" y2="13" stroke="url(#vcg2)" stroke-width="0.8" opacity="0.5"/>
+            <line x1="0" y1="18" x2="48" y2="18" stroke="url(#vcg2)" stroke-width="0.8" opacity="0.5"/>
+            <line x1="0" y1="23" x2="48" y2="23" stroke="url(#vcg2)" stroke-width="0.8" opacity="0.5"/>
+            <line x1="0" y1="28" x2="48" y2="28" stroke="url(#vcg2)" stroke-width="0.8" opacity="0.5"/>
+            <!-- Treble clef simplified -->
+            <path d="M8 28 C8 20 14 14 12 10 C10 6 6 8 6 12 C6 16 10 18 12 16"
+              stroke="#7C3AED" stroke-width="1.2" fill="none"/>
+            <!-- Key signature sharps -->
+            <text x="18" y="14" fill="#06B6D4" font-size="8" font-family="serif" opacity="0.9">#</text>
+            <text x="24" y="10" fill="#7C3AED" font-size="8" font-family="serif" opacity="0.9">#</text>
+          </svg>
+          <div class="card-title">Krumhansl–Schmuckler</div>
+          <p class="card-body">
+            Matches your singing against all 24 major and minor key profiles
+            to find your musical home.
+          </p>
+        </div>
+
+        <!-- Card 3: Chord Engine -->
+        <div class="glass-card" id="card-3">
+          <svg class="card-icon" viewBox="0 0 48 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Piano keys base -->
+            <rect x="2"  y="8"  width="8"  height="20" rx="1" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+            <rect x="12" y="8"  width="8"  height="20" rx="1" fill="rgba(124,58,237,0.4)"   stroke="#7C3AED" stroke-width="0.8"/>
+            <rect x="22" y="8"  width="8"  height="20" rx="1" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+            <rect x="32" y="8"  width="8"  height="20" rx="1" fill="rgba(6,182,212,0.35)"   stroke="#06B6D4" stroke-width="0.8"/>
+            <rect x="42" y="8"  width="4"  height="20" rx="1" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+            <!-- Black keys -->
+            <rect x="7"  y="8"  width="5"  height="12" rx="1" fill="rgba(0,0,0,0.7)" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+            <rect x="27" y="8"  width="5"  height="12" rx="1" fill="rgba(0,0,0,0.7)" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+            <rect x="37" y="8"  width="5"  height="12" rx="1" fill="rgba(0,0,0,0.7)" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>
+          </svg>
+          <div class="card-title">Diatonic Chord Engine</div>
+          <p class="card-body">
+            Generates every chord that fits your key and ranks them by
+            stability, role, and resolution tendency.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: THE PIPELINE -->
+    <section id="section-3" class="section">
+      <div class="s3-overline" id="s3-overline">02 / PIPELINE</div>
+      <div class="s3-pipeline">
+        <div class="pipeline-track" id="pipeline-track">
+          <div class="pipeline-node" id="node-0">
+            <span class="pipeline-node-num">1</span>
+            <div class="pipeline-node-label">CAPTURE</div>
+          </div>
+          <div class="pipeline-beam" id="beam-0"></div>
+          <div class="pipeline-node" id="node-1">
+            <span class="pipeline-node-num">2</span>
+            <div class="pipeline-node-label">WORKLET</div>
+          </div>
+          <div class="pipeline-beam" id="beam-1"></div>
+          <div class="pipeline-node" id="node-2">
+            <span class="pipeline-node-num">3</span>
+            <div class="pipeline-node-label">YIN</div>
+          </div>
+          <div class="pipeline-beam" id="beam-2"></div>
+          <div class="pipeline-node" id="node-3">
+            <span class="pipeline-node-num">4</span>
+            <div class="pipeline-node-label">CHORDS</div>
+          </div>
+          <div class="pipeline-beam" id="beam-3"></div>
+          <div class="pipeline-node" id="node-4">
+            <span class="pipeline-node-num">5</span>
+            <div class="pipeline-node-label">DISPLAY</div>
+          </div>
+        </div>
+      </div>
+      <div class="s3-caption" id="s3-caption">~30ms. Faster than you can feel it.</div>
+    </section>
+
+    <!-- SECTION 4: THE EXPERIENCE -->
+    <section id="section-4" class="section">
+      <div class="experience-orb"></div>
+      <div class="experience-content">
+        <div class="s4-overline" id="s4-overline">03 / EXPERIENCE</div>
+        <h2 class="s4-headline">
+          <span class="word">Not</span>
+          <span style="display:inline"> </span>
+          <span class="word">a</span>
+          <span style="display:inline"> </span>
+          <span class="word">tool.</span>
+          <br>
+          <span class="word glow">An</span>
+          <span style="display:inline"> </span>
+          <span class="word glow">instrument.</span>
+        </h2>
+        <p class="s4-body" id="s4-body">
+          Designed for singers who play. For players who want to sing.
+          For anyone who hears music and wants to understand it.
+        </p>
+        <div class="btn-magnetic-wrap" id="s4-cta-wrap">
+          <button class="btn-magnetic" id="s4-cta">Open VoxChord</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer>
+      <div class="footer-rule"></div>
+      <div class="footer-inner">
+        <span class="footer-text">VoxChord · AudioWorklet + YIN · Built for musicians</span>
+        <svg class="footer-star" width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M6 0 L6.7 5.3 L12 6 L6.7 6.7 L6 12 L5.3 6.7 L0 6 L5.3 5.3 Z"
+            fill="white"/>
+        </svg>
+      </div>
+    </footer>
+
+  </div><!-- /scroll-container -->
+
+</div><!-- /ui-root -->
+
+<!-- SCROLL INDICATOR -->
+<div id="scroll-indicator">
+  <div class="scroll-line-wrap">
+    <div class="scroll-line-track"></div>
+    <div class="scroll-dot"></div>
+  </div>
+  <span class="scroll-label">scroll</span>
+</div>
+
+<!-- PAGE TRANSITION OVERLAY -->
+<div id="transition-overlay"></div>
+
+<!-- SCRIPTS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+
+<!-- THREE.JS SCENE ENGINE -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+    "three/examples/jsm/postprocessing/EffectComposer.js": "https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/EffectComposer.js",
+    "three/examples/jsm/postprocessing/RenderPass.js": "https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/RenderPass.js",
+    "three/examples/jsm/postprocessing/UnrealBloomPass.js": "https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/UnrealBloomPass.js",
+    "three/examples/jsm/postprocessing/ShaderPass.js": "https://unpkg.com/three@0.128.0/examples/jsm/postprocessing/ShaderPass.js",
+    "three/examples/jsm/shaders/LuminosityHighPassShader.js": "https://unpkg.com/three@0.128.0/examples/jsm/shaders/LuminosityHighPassShader.js",
+    "three/examples/jsm/shaders/CopyShader.js": "https://unpkg.com/three@0.128.0/examples/jsm/shaders/CopyShader.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass }     from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+(async () => {
+
+let CANNON = null;
+try {
+  const m = await import('https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js');
+  CANNON = m.default ?? m;
+} catch(e) { console.warn('[VoxChord] cannon-es unavailable'); }
+
+const mount = document.getElementById('mount');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping  = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+mount.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050508);
+scene.fog = new THREE.FogExp2(0x050508, 0.022);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 1, 12);
+camera.lookAt(0, 0, 0);
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.5, 0.4);
+composer.addPass(bloom);
+
+const root = new THREE.Group();
+scene.add(root);
+scene.add(new THREE.AmbientLight(0x040410, 0.6));
+// Soft violet fill from above — ties floor palette to UI colours
+const topFill = new THREE.DirectionalLight(0x1a0933, 0.35);
+topFill.position.set(0, 10, 0);
+scene.add(topFill);
+
+function seededRng(seed) {
+  let s = seed >>> 0;
+  return () => { s = Math.imul(s, 48271) % 2147483647; return (s & 0x7fffffff) / 0x7fffffff; };
+}
+
+function clipPoly(poly, pA, pB) {
+  if (!poly.length) return [];
+  const mx = (pA[0] + pB[0]) * .5, my = (pA[1] + pB[1]) * .5;
+  const dx = pB[0] - pA[0],       dy = pB[1] - pA[1];
+  const side = ([x, y]) => (x - mx) * dx + (y - my) * dy;
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const sa = side(a), sb = side(b);
+    if (sa <= 0) out.push(a);
+    if ((sa < 0 && sb > 0) || (sa > 0 && sb < 0)) {
+      const t = sa / (sa - sb);
+      out.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]);
+    }
+  }
+  return out;
+}
+
+function voronoiCell(seeds, i, B) {
+  let p = [[B[0], B[1]], [B[2], B[1]], [B[2], B[3]], [B[0], B[3]]];
+  for (let j = 0; j < seeds.length; j++) {
+    if (j === i) continue;
+    p = clipPoly(p, seeds[i], seeds[j]);
+    if (p.length < 3) return [];
+  }
+  return p;
+}
+
+const floorGroup = new THREE.Group();
+floorGroup.position.y = -2.2;
+root.add(floorGroup);
+
+const FRAGS = [];
+const VLIGHTS = [], CLIGHTS = [];
+let flareLight, flareTimer = 0, flareInterval = 4 + Math.random() * 4;
+
+{
+  const rng = seededRng(7331);
+  const N = 76, HALF = 10;
+  const seeds = Array.from({ length: N }, () => [(rng() - .5) * 18, (rng() - .5) * 18]);
+  const guards = [[-HALF,-HALF],[HALF,-HALF],[HALF,HALF],[-HALF,HALF],
+                  [-HALF,0],[HALF,0],[0,-HALF],[0,HALF]];
+  const all = [...seeds, ...guards];
+  const B = [-HALF, -HALF, HALF, HALF];
+
+  for (let i = 0; i < N; i++) {
+    const cell = voronoiCell(all, i, B);
+    if (cell.length < 3) continue;
+
+    let cx = 0, cy = 0;
+    for (const [x, y] of cell) { cx += x; cy += y; }
+    cx /= cell.length; cy /= cell.length;
+
+    const inset = cell.map(([x, y]) => {
+      const dx = cx - x, dy = cy - y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const k = 0.055 / d;
+      return [x + dx * k, y + dy * k];
+    });
+
+    const shape = new THREE.Shape();
+    shape.moveTo(inset[0][0], inset[0][1]);
+    for (let j = 1; j < inset.length; j++) shape.lineTo(inset[j][0], inset[j][1]);
+    shape.closePath();
+
+    const mesh = new THREE.Mesh(
+      new THREE.ShapeGeometry(shape),
+      new THREE.MeshStandardMaterial({
+        color: 0x08080f, roughness: 0.05, metalness: 0.98,
+        side: THREE.DoubleSide, transparent: true, opacity: 1,
+      })
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.userData.cx = seeds[i][0];
+    mesh.userData.cz = seeds[i][1];
+    floorGroup.add(mesh);
+    FRAGS.push(mesh);
+
+    if (i < 42) {
+      const isV = i % 2 === 0;
+      const pl = new THREE.PointLight(isV ? 0x7C3AED : 0x06B6D4, 0.45, 1.6);
+      pl.position.set(seeds[i][0], 0.12, seeds[i][1]);
+      floorGroup.add(pl);
+      (isV ? VLIGHTS : CLIGHTS).push(pl);
+    }
+  }
+
+  flareLight = new THREE.PointLight(0xffffff, 0, 2.5);
+  floorGroup.add(flareLight);
+}
+
+let physWorld = null, physBodies = [], shatterActive = false, shatterT = 0;
+
+function initPhysics() {
+  if (!CANNON || physWorld) return;
+  physWorld = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.8, 0) });
+  physWorld.broadphase = new CANNON.SAPBroadphase(physWorld);
+  physWorld.allowSleep = true;
+}
+
+const TORUS_VERT = `
+uniform float time;
+varying vec3 vWP;
+varying vec3 vN;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWP = wp.xyz;
+  vN  = normalize(normalMatrix * normal);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const TORUS_FRAG = `
+uniform float time;
+uniform float amp;
+varying vec3 vWP;
+varying vec3 vN;
+float h(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float n3(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(h(i),h(i+vec3(1,0,0)),f.x),mix(h(i+vec3(0,1,0)),h(i+vec3(1,1,0)),f.x),f.y),
+    mix(mix(h(i+vec3(0,0,1)),h(i+vec3(1,0,1)),f.x),mix(h(i+vec3(0,1,1)),h(i+vec3(1,1,1)),f.x),f.y),f.z);
+}
+void main() {
+  vec3 VI = vec3(0.486, 0.227, 0.929);
+  vec3 CY = vec3(0.024, 0.714, 0.831);
+  float blend = smoothstep(-0.5, 0.5, vWP.x);
+  vec3 base = mix(VI, CY, blend);
+  vec3 nc = vN * 14.0 + vec3(time * 0.09, time * 0.065, 0.0);
+  float f1 = n3(nc), f2 = n3(nc * 2.4 + 5.17), f3 = n3(nc * 0.48 + vec3(time * 0.04));
+  float fib = pow(f1 * 0.52 + f2 * 0.31 + f3 * 0.17, 0.72);
+  vec3 vd = normalize(cameraPosition - vWP);
+  float rim = pow(1.0 - max(dot(vN, vd), 0.0), 2.1);
+  vec3 col = base * (0.38 + fib * 1.35);
+  col += rim * mix(VI, CY, blend) * 1.6;
+  col *= 1.1 * (1.0 + amp * 0.4);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+const torusMat = new THREE.ShaderMaterial({
+  vertexShader: TORUS_VERT, fragmentShader: TORUS_FRAG,
+  uniforms: { time: { value: 0 }, amp: { value: 0 } },
+});
+const torusGroup = new THREE.Group();
+torusGroup.position.y = -10;
+torusGroup.visible = false;
+root.add(torusGroup);
+
+const torus = new THREE.Mesh(new THREE.TorusGeometry(2, 0.32, 200, 64), torusMat);
+torusGroup.add(torus);
+const torusGlow = new THREE.PointLight(0x9966bb, 0.7, 3.0);
+torusGroup.add(torusGlow);
+
+const RAY_VERT = `varying float vT; void main() { vT = (position.y + 6.0) / 12.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const RAY_FRAG = `varying float vT; void main() { float a = (1.0 - pow(vT, 0.5)) * 0.038; gl_FragColor = vec4(0.72, 0.60, 1.0, a); }`;
+
+const godRay = new THREE.Mesh(
+  new THREE.ConeGeometry(0.6, 12, 32, 1, true),
+  new THREE.ShaderMaterial({
+    vertexShader: RAY_VERT, fragmentShader: RAY_FRAG,
+    transparent: true, blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide, depthWrite: false,
+  })
+);
+godRay.position.y = 6;
+torusGroup.add(godRay);
+
+const PC = 1800;
+const pPos = new Float32Array(PC * 3), pCol = new Float32Array(PC * 3);
+const pVel = new Float32Array(PC * 3), pLife = new Float32Array(PC), pMaxL = new Float32Array(PC);
+const VI3 = new THREE.Color(0x7C3AED), CY3 = new THREE.Color(0x06B6D4);
+
+function spawnP(i) {
+  const u = Math.random()*Math.PI*2, v = Math.random()*Math.PI*2;
+  const R = 2, r = 0.32;
+  pPos[i*3]   = (R + r*Math.cos(v))*Math.cos(u);
+  pPos[i*3+1] = r*Math.sin(v);
+  pPos[i*3+2] = (R + r*Math.cos(v))*Math.sin(u);
+  pVel[i*3]   = (Math.random()-.5)*.006;
+  pVel[i*3+1] = .008 + Math.random()*.012;
+  pVel[i*3+2] = (Math.random()-.5)*.006;
+  pMaxL[i] = (3 + Math.random()*3)*60;
+  pLife[i] = Math.random()*pMaxL[i];
+  const c = Math.random()<.6 ? VI3 : CY3;
+  pCol[i*3] = c.r; pCol[i*3+1] = c.g; pCol[i*3+2] = c.b;
+}
+for (let i = 0; i < PC; i++) spawnP(i);
+
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+pGeo.setAttribute('color',    new THREE.BufferAttribute(pCol, 3));
+const pMesh = new THREE.Points(pGeo, new THREE.PointsMaterial({
+  vertexColors: true, size: .028,
+  blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: .55,
+}));
+torusGroup.add(pMesh);
+
+const BC = 300;
+const bPos = new Float32Array(BC*3), bVel = new Float32Array(BC*3), bLife = new Float32Array(BC);
+let burstActive = false;
+const bGeo = new THREE.BufferGeometry();
+bGeo.setAttribute('position', new THREE.BufferAttribute(bPos, 3));
+const bMat = new THREE.PointsMaterial({
+  color: 0xffffff, size: .06,
+  blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 1,
+});
+const bMesh = new THREE.Points(bGeo, bMat);
+bMesh.visible = false;
+torusGroup.add(bMesh);
+
+const RIBBON_DEFS = [
+  { z: -5.5, color: 0x7C3AED, r: .022, speed: .4, freq: .80, amp: .60 },
+  { z: -7.0, color: 0xffffff, r: .016, speed: .3, freq: 1.1, amp: .40, op: .28 },
+  { z: -8.5, color: 0x06B6D4, r: .022, speed: .5, freq: .60, amp: .80 },
+];
+
+// Use a line-based ribbon instead of TubeGeometry to avoid per-frame geometry recreation
+const RIBBONS = RIBBON_DEFS.map(d => {
+  const N = 41;
+  const positions = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    positions[i*3]   = -10 + i * 0.5;
+    positions[i*3+1] = 0;
+    positions[i*3+2] = d.z;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({
+    color: d.color,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    opacity: (d.op ?? 1) * 1.4,
+    linewidth: 1,
+  });
+  const mesh = new THREE.Line(geo, mat);
+  mesh.visible = false;
+  root.add(mesh);
+  return { mesh, d, positions, geo };
+});
+
+const RING_POOL = [];
+let ringTimer = 0, ringColor = false;
+for (let i = 0; i < 8; i++) {
+  const m = new THREE.Mesh(
+    new THREE.RingGeometry(.01, .25, 64),
+    new THREE.MeshBasicMaterial({
+      color: 0x7C3AED, blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide, depthWrite: false, transparent: true, opacity: 0,
+    })
+  );
+  m.rotation.x = -Math.PI/2;
+  m.position.y = -2.2;
+  m.visible = false;
+  m.userData = { active: false, t: 0, spd: 1 };
+  root.add(m);
+  RING_POOL.push(m);
+}
+
+function spawnRing(spd = 1) {
+  const r = RING_POOL.find(r => !r.userData.active);
+  if (!r) return;
+  r.userData.active = true; r.userData.t = 0; r.userData.spd = spd;
+  r.material.color.set(ringColor ? 0x7C3AED : 0x06B6D4);
+  ringColor = !ringColor;
+  r.visible = true;
+}
+
+const CAM_STOPS = [
+  { t: 0.0, p: new THREE.Vector3(0, 1, 12) },
+  { t: 0.3, p: new THREE.Vector3(0, 3, 20) },
+  { t: 0.6, p: new THREE.Vector3(0, 0, 16) },
+  { t: 1.0, p: new THREE.Vector3(0,-1, 28) },
+];
+const camCur = new THREE.Vector3(0, 1, 12);
+
+function getCamAtScroll(s) {
+  let a = CAM_STOPS[0], b = CAM_STOPS[1];
+  for (let i = 0; i < CAM_STOPS.length-1; i++) {
+    if (s >= CAM_STOPS[i].t && s <= CAM_STOPS[i+1].t) { a = CAM_STOPS[i]; b = CAM_STOPS[i+1]; break; }
+  }
+  const lt = (s - a.t) / (b.t - a.t || 1);
+  const sm = lt*lt*(3-2*lt);
+  return new THREE.Vector3().lerpVectors(a.p, b.p, sm);
+}
+
+let STATE = 0, voiceAmp = 0, chordFlag = false;
+let chordPulseActive = false, chordPulseT = 0;
+let scrollProg = 0, tRX = 0, tRY = 0, cRX = 0, cRY = 0;
+
+addEventListener('mousemove', e => {
+  tRY = ((e.clientX / innerWidth) * 2 - 1) * .14;
+  tRX = -((e.clientY / innerHeight) * 2 - 1) * .14;
+});
+
+function setState(n) {
+  if (n === STATE) return;
+  if (n === 1 && STATE === 0) {
+    STATE = 1; initPhysics();
+    torusGroup.visible = true;
+    torusGroup.position.set(0, -8, 0);
+    torusGroup.rotation.set(0, 0, Math.PI/12);
+    torusGroup.scale.setScalar(1);
+    gsap.to(torusGroup.position, { y: 0, duration: 2.8, ease: 'power4.out' });
+    gsap.to(torusGroup.rotation, { z: 0, duration: 2.8, ease: 'power4.out',
+      onComplete: () => { if (STATE === 1) setState(2); }
+    });
+    RIBBONS.forEach(({ mesh }) => mesh.visible = true);
+
+    if (physWorld) {
+      shatterActive = true; shatterT = 0;
+      FRAGS.forEach(mesh => {
+        const wp = new THREE.Vector3(), wq = new THREE.Quaternion();
+        mesh.getWorldPosition(wp); mesh.getWorldQuaternion(wq);
+        const bb = new THREE.Box3().setFromObject(mesh);
+        const sz = new THREE.Vector3(); bb.getSize(sz);
+        const body = new CANNON.Body({
+          mass: .8 + Math.random() * 1.7,
+          shape: new CANNON.Box(new CANNON.Vec3(
+            Math.max(sz.x*.5,.04), Math.max(sz.y*.5,.01), Math.max(sz.z*.5,.04)
+          )),
+        });
+        body.position.set(wp.x, wp.y, wp.z);
+        body.quaternion.set(wq.x, wq.y, wq.z, wq.w);
+        const rad = new THREE.Vector3(wp.x, 0, wp.z).normalize();
+        body.applyImpulse(
+          new CANNON.Vec3(rad.x*(2+Math.random()*3), 6+Math.random()*8, rad.z*(2+Math.random()*3)),
+          body.position
+        );
+        body.angularVelocity.set((Math.random()-.5)*16,(Math.random()-.5)*16,(Math.random()-.5)*16);
+        physWorld.addBody(body);
+        floorGroup.remove(mesh); root.add(mesh);
+        mesh.position.copy(wp); mesh.quaternion.copy(wq);
+        physBodies.push({ mesh, body });
+      });
+    } else {
+      FRAGS.forEach(mesh => {
+        gsap.to(mesh.position, { y: mesh.position.y-(4+Math.random()*8), duration: 1.2+Math.random()*.8, ease: 'power2.in', delay: Math.random()*.4 });
+        gsap.to(mesh.material, { opacity: 0, duration: .5, delay: 1.8+Math.random()*.4 });
+      });
+    }
+    gsap.delayedCall(1.6, () => { gsap.to(VLIGHTS.concat(CLIGHTS), { intensity: 0, duration: .6 }); });
+    gsap.delayedCall(2.5, () => { floorGroup.visible = false; FRAGS.forEach(m => m.visible = false); });
+    return;
+  }
+  if (n === 2) { STATE = 2; floorGroup.visible = false; return; }
+  if (n === 3) {
+    STATE = 3;
+    gsap.to(torusGroup.position, { x: 0, y: -1.5, duration: 1.0, ease: 'power2.inOut' });
+    gsap.to(torusGroup.scale, { x: .45, y: .45, z: .45, duration: 1.0, ease: 'power2.inOut' });
+    return;
+  }
+  if (n === 0) {
+    STATE = 0; torusGroup.visible = false;
+    torusGroup.position.set(0, -10, 0); torusGroup.scale.setScalar(1); torusGroup.rotation.set(0,0,0);
+    RIBBONS.forEach(({ mesh }) => mesh.visible = false);
+    floorGroup.visible = true;
+    FRAGS.forEach(m => { m.material.opacity = 1; m.visible = true; });
+    physBodies.forEach(({ body }) => { if (physWorld) physWorld.removeBody(body); });
+    physBodies = []; shatterActive = false; shatterT = 0;
+    return;
+  }
+  STATE = n;
+}
+
+const clock = new THREE.Clock();
+let prevT = 0, breathPhase = 0;
+
+function tick() {
+  requestAnimationFrame(tick);
+  const T = clock.getElapsedTime();
+  const dt = Math.min(T - prevT, .05);
+  prevT = T;
+
+  cRX += (tRX - cRX) * .04;
+  cRY += (tRY - cRY) * .04;
+  if (STATE >= 2) { root.rotation.x = cRX; root.rotation.y = cRY; }
+
+  camCur.lerp(getCamAtScroll(scrollProg), .05);
+  camera.position.copy(camCur);
+  camera.lookAt(0, 0, 0);
+
+  if (STATE === 0 && floorGroup.visible) {
+    const vI = .18 + .28*(Math.sin(T/5*Math.PI*2)*.5+.5);
+    const cI = .18 + .28*(Math.sin((T/5+.5)*Math.PI*2)*.5+.5);
+    VLIGHTS.forEach(l => l.intensity = vI);
+    CLIGHTS.forEach(l => l.intensity = cI);
+    flareTimer += dt;
+    if (flareTimer >= flareInterval) {
+      flareTimer = 0; flareInterval = 4 + Math.random()*4;
+      const fl = FRAGS[Math.floor(Math.random()*FRAGS.length)];
+      if (fl) {
+        flareLight.position.set(fl.userData.cx, .28, fl.userData.cz);
+        flareLight.intensity = 1.8;
+        gsap.to(flareLight, { intensity: 0, duration: .6, ease: 'power2.out' });
+      }
+    }
+  }
+
+  if (STATE === 1 && shatterActive && physWorld) {
+    physWorld.step(1/60, dt, 3);
+    shatterT += dt;
+    physBodies.forEach(({ mesh, body }) => {
+      mesh.position.set(body.position.x, body.position.y, body.position.z);
+      mesh.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+      if (shatterT > 2.0) { mesh.material.opacity = Math.max(0, 1-(shatterT-2.0)/.4); if (mesh.material.opacity <= 0) mesh.visible = false; }
+    });
+    if (shatterT >= 2.4) { shatterActive = false; physBodies.forEach(({mesh}) => mesh.visible = false); }
+  }
+
+  if (STATE >= 1 && torusGroup.visible) {
+    torusMat.uniforms.time.value = T;
+    torusMat.uniforms.amp.value  = voiceAmp;
+    if (STATE === 2) { torusGroup.rotation.y += (Math.PI*2/40)*dt; }
+    else if (STATE === 3) { torusGroup.rotation.y += ((Math.PI*2/40)*(1+voiceAmp*3))*dt; }
+    breathPhase += dt/4;
+    const breathS = 1 + Math.sin(breathPhase*Math.PI*2)*.02;
+    let pulseS = 1;
+    if (chordPulseActive) {
+      chordPulseT += dt/.8;
+      if (chordPulseT >= 1) { chordPulseActive = false; chordPulseT = 1; }
+      const p = chordPulseT;
+      pulseS = 1 + Math.sin(p*Math.PI)*.13*(1-p*.7);
+    }
+    torus.scale.setScalar(breathS*pulseS);
+    godRay.visible = false;
+    torusGlow.intensity = 0.5 + voiceAmp*1.0;
+  }
+
+  if (STATE >= 1 && torusGroup.visible) {
+    const emitBoost = STATE === 3 ? 1+voiceAmp*2 : 1;
+    for (let i = 0; i < PC; i++) {
+      pLife[i] += emitBoost;
+      if (pLife[i] >= pMaxL[i]) { spawnP(i); continue; }
+      pPos[i*3] += pVel[i*3]; pPos[i*3+1] += pVel[i*3+1]; pPos[i*3+2] += pVel[i*3+2];
+    }
+    pGeo.attributes.position.needsUpdate = true;
+    if (burstActive) {
+      let any = false;
+      for (let i = 0; i < BC; i++) {
+        if (bLife[i] <= 0) continue; any = true; bLife[i]--;
+        bPos[i*3] += bVel[i*3]; bPos[i*3+1] += bVel[i*3+1]; bPos[i*3+2] += bVel[i*3+2];
+      }
+      bGeo.attributes.position.needsUpdate = true;
+      if (!any) { burstActive = false; bMesh.visible = false; }
+    }
+  }
+
+  if (STATE >= 1) {
+    let ampMod = 1;
+    if (scrollProg < .3) ampMod = 1;
+    else if (scrollProg < .6) ampMod = 1+((scrollProg-.3)/.3)*.8;
+    else ampMod = Math.max(.5, 1.8-((scrollProg-.6)/.4)*1.3);
+    RIBBONS.forEach(({ mesh, d, positions, geo }) => {
+      const A = d.amp*ampMod*(1+voiceAmp*2.0);
+      for (let i = 0; i <= 40; i++) {
+        const x = -10+i*.5;
+        positions[i*3+1] = Math.sin((x+T*d.speed)*d.freq)*A;
+      }
+      geo.attributes.position.needsUpdate = true;
+    });
+  }
+
+  if (STATE >= 1) {
+    ringTimer += dt;
+    if (ringTimer >= 3.0) { ringTimer = 0; spawnRing(); }
+    RING_POOL.forEach(ring => {
+      if (!ring.userData.active) return;
+      ring.userData.t += dt*ring.userData.spd/4;
+      if (ring.userData.t >= 1) { ring.userData.active = false; ring.visible = false; return; }
+      const p = ring.userData.t;
+      const ir = p*3, or = ir+.12;
+      ring.geometry.dispose();
+      ring.geometry = new THREE.RingGeometry(ir, or, 64);
+      ring.material.opacity = (1-p)*.45;
+    });
+  }
+
+  if (chordFlag && !chordPulseActive) {
+    chordFlag = false;
+    chordPulseActive = true; chordPulseT = 0;
+    burstActive = true; bMesh.visible = true;
+    for (let i = 0; i < BC; i++) {
+      bPos[i*3] = bPos[i*3+1] = bPos[i*3+2] = 0;
+      const theta = Math.random()*Math.PI*2;
+      const phi = Math.acos(2*Math.random()-1);
+      const spd = .04 + Math.random()*.11;
+      bVel[i*3] = Math.sin(phi)*Math.cos(theta)*spd;
+      bVel[i*3+1] = Math.cos(phi)*spd;
+      bVel[i*3+2] = Math.sin(phi)*Math.sin(theta)*spd;
+      bLife[i] = 30+Math.floor(Math.random()*60);
+    }
+    bGeo.attributes.position.needsUpdate = true;
+    spawnRing(2); setTimeout(() => spawnRing(2), 100); setTimeout(() => spawnRing(2), 200);
+  }
+
+  composer.render();
+}
+
+tick();
+
+// Simulated voice for demo
+let sT = 0;
+setInterval(() => {
+  sT += .016;
+  window.VoxScene?.setVoiceAmplitude((Math.sin(sT*1.3)*.5+.5)*.7+.1);
+  if (Math.floor(sT)%4===0 && sT%1<.016) {
+    window.VoxScene?.setChordDetected(true);
+    setTimeout(() => window.VoxScene?.setChordDetected(false), 300);
+  }
+}, 16);
+
+window.VoxScene = {
+  setState(n)           { setState(n); },
+  setScrollProgress(n)  { scrollProg = Math.max(0, Math.min(1, n)); },
+  setVoiceAmplitude(n)  { voiceAmp   = Math.max(0, Math.min(1, n)); },
+  setChordDetected(b)   { if (b && !chordFlag) chordFlag = true; },
+  destroy() { renderer.dispose(); composer.dispose(); mount.innerHTML = ''; },
+};
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+})();
+</script>
+
+<!-- UI CONTROLLER -->
+<script>
+/* ═══════════════════════════════════════════
+   UI CONTROLLER — VoxChord Landing Page
+═══════════════════════════════════════════ */
+
+const isMobile = () => window.innerWidth < 768;
+
+/* ─── DOM refs ─── */
+const crackOverlay    = document.getElementById('crack-overlay');
+const voxTitle        = document.getElementById('voxchord-title');
+const crackSubtitle   = document.getElementById('crack-subtitle');
+const grantBtn        = document.getElementById('grant-btn');
+const micError        = document.getElementById('mic-error');
+const scrollContainer = document.getElementById('scroll-container');
+const scrollIndicator = document.getElementById('scroll-indicator');
+const transitionOverlay = document.getElementById('transition-overlay');
+const particleOverlay = document.getElementById('particle-overlay');
+
+/* ─── State ─── */
+let scrollTriggersInited = false;
+let sequenceComplete = false;
+let sceneReady = false;
+
+/* ══════════════════════════════════════════
+   CSS PARTICLE SYSTEM — elegant floating dots
+   visible from page load, hides after sequence
+══════════════════════════════════════════ */
+(function spawnCSSParticles() {
+  const COUNT = 55;
+  const fragment = document.createDocumentFragment();
+
+  for (let i = 0; i < COUNT; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'lp';
+
+    const x = Math.random() * 100;
+    const y = Math.random() * 100;
+    const size = 1 + Math.random() * 2.5;
+    const isViolet = Math.random() < 0.55;
+    const color = isViolet
+      ? `rgba(124,58,237,${0.15 + Math.random() * 0.4})`
+      : `rgba(6,182,212,${0.15 + Math.random() * 0.4})`;
+
+    const dur   = 6 + Math.random() * 10;
+    const delay = Math.random() * -dur; // stagger start positions
+    const driftX = (Math.random() - 0.5) * 60;
+    const driftY = -(20 + Math.random() * 50);
+
+    dot.style.cssText = `
+      left: ${x}%;
+      top: ${y}%;
+      width: ${size}px;
+      height: ${size}px;
+      background: ${color};
+      box-shadow: 0 0 ${size * 3}px ${color};
+      animation: lpFloat ${dur}s ${delay}s ease-in-out infinite;
+      --dx: ${driftX}px;
+      --dy: ${driftY}px;
+      opacity: 0;
+    `;
+    fragment.appendChild(dot);
+  }
+
+  particleOverlay.appendChild(fragment);
+})();
+
+/* Inject the keyframe dynamically so --dx/--dy CSS vars work */
+const lpStyle = document.createElement('style');
+lpStyle.textContent = `
+@keyframes lpFloat {
+  0%   { transform: translate(0, 0) scale(1);     opacity: 0; }
+  10%  { opacity: 1; }
+  85%  { opacity: 0.7; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.6); opacity: 0; }
+}`;
+document.head.appendChild(lpStyle);
+
+/* ══════════════════════════════════════════
+   BOOT — fast, smooth startup
+══════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  // Show subtitle + button much faster — no need to wait for scene
+  setTimeout(() => crackSubtitle.classList.add('visible'), 600);
+  setTimeout(() => grantBtn.classList.add('visible'), 1100);
+});
+
+window.addEventListener('load', () => {
+  // Init Three.js scene (state 0) once everything is loaded
+  requestAnimationFrame(() => {
+    safeVox('setState', 0);
+    sceneReady = true;
+  });
+});
+
+/* ══════════════════════════════════════════
+   GRANT ACCESS CLICK — THE CRACK SEQUENCE
+══════════════════════════════════════════ */
+grantBtn.addEventListener('click', () => {
+  // Disable button immediately to prevent double-clicks
+  grantBtn.style.pointerEvents = 'none';
+  grantBtn.style.opacity = '0.5';
+
+  // If scene hasn't initialized yet, wait briefly then proceed
+  if (!sceneReady) {
+    safeVox('setState', 0);
+    sceneReady = true;
+  }
+
+  runCrackSequence();
+});
+
+function runCrackSequence() {
+  // Fade out CSS particles as 3D scene takes over
+  gsap.to(particleOverlay, { opacity: 0, duration: 0.6, ease: 'power2.out' });
+
+  // t=0: setState(1) — floor shatters, torus rises
+  safeVox('setState', 1);
+
+  // t=0: Dissolve "VOXCHORD" title with a satisfying pop
+  gsap.to(voxTitle, {
+    scale: 1.06,
+    duration: 0.35,
+    ease: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+    onComplete: () => {
+      gsap.to(voxTitle, {
+        scale: 0.92,
+        opacity: 0,
+        duration: 0.5,
+        ease: 'cubic-bezier(0.7, 0, 0.84, 0)',
+      });
+    }
+  });
+
+  // t=0: Subtitle + button fade out
+  gsap.to([crackSubtitle, grantBtn], {
+    opacity: 0,
+    duration: 0.25,
+    ease: 'cubic-bezier(0.7, 0, 0.84, 0)',
+  });
+
+  // t=1.3: setState(2) — torus settled
+  gsap.delayedCall(1.3, () => safeVox('setState', 2));
+
+  // t=1.5: Begin revealing hero — smooth fade-in of scroll-container first,
+  //         then animate individual elements in
+  gsap.delayedCall(1.5, () => {
+    // Pre-show container invisibly so layout is ready
+    crackOverlay.style.display = 'none';
+    document.body.classList.remove('locked');
+    scrollContainer.classList.add('active');
+    // Small rAF gap to let browser paint before GSAP animates elements
+    requestAnimationFrame(() => requestAnimationFrame(revealHero));
+  });
+
+  // t=2.8: Sequence complete, enable scroll + ScrollTrigger + show scroll indicator
+  gsap.delayedCall(2.8, () => {
+    sequenceComplete = true;
+    initScrollTriggers();
+    // Show scroll indicator now that there's content to scroll
+    scrollIndicator.classList.add('visible');
+  });
+}
+
+function handleMicDenied() {
+  safeVox('setState', 2);
+  micError.classList.add('visible');
+  gsap.to(particleOverlay, { opacity: 0, duration: 0.6 });
+
+  gsap.to([voxTitle, crackSubtitle, grantBtn], {
+    opacity: 0,
+    duration: 0.4,
+    ease: 'cubic-bezier(0.7, 0, 0.84, 0)',
+    onComplete: () => {
+      crackOverlay.style.display = 'none';
+      document.body.classList.remove('locked');
+      scrollContainer.classList.add('active');
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        revealHero();
+        gsap.delayedCall(0.4, () => {
+          initScrollTriggers();
+          scrollIndicator.classList.add('visible');
+        });
+        sequenceComplete = true;
+      }));
+    }
+  });
+}
+
+/* ══════════════════════════════════════════
+   HERO REVEAL — Section 0
+══════════════════════════════════════════ */
+function revealHero() {
+  const heroLabel     = document.getElementById('hero-label');
+  const heroLabelLine = document.getElementById('hero-label-line');
+  const heroWords     = document.querySelectorAll('.hero-headline .word');
+  const heroSub       = document.getElementById('hero-sub');
+  const heroCtas      = document.getElementById('hero-ctas');
+
+  const tl = gsap.timeline({ defaults: { ease: 'cubic-bezier(0.16, 1, 0.3, 1)' } });
+
+  tl.to(heroLabel, { opacity: 1, y: 0, duration: 0.55 })
+    .to(heroLabelLine, { scaleX: 1, duration: 0.4 }, '<');
+
+  heroWords.forEach((word, i) => {
+    tl.to(word, { opacity: 1, y: 0, duration: 0.55 }, `<${i === 0 ? 0.05 : 0.08}`);
+  });
+
+  tl.to(heroSub,  { opacity: 1, y: 0, duration: 0.55 }, '<0.08')
+    .to(heroCtas, { opacity: 1, y: 0, duration: 0.55 }, '<0.08');
+}
+
+/* ══════════════════════════════════════════
+   SCROLL INDICATOR
+══════════════════════════════════════════ */
+window.addEventListener('scroll', () => {
+  if (!sequenceComplete) return;
+
+  const progress = window.scrollY / (document.body.scrollHeight - window.innerHeight);
+  safeVox('setScrollProgress', progress);
+
+  if (progress > 0.05) {
+    scrollIndicator.classList.add('hidden');
+    scrollIndicator.classList.remove('visible');
+  } else {
+    scrollIndicator.classList.remove('hidden');
+    scrollIndicator.classList.add('visible');
+  }
+}, { passive: true });
+
+/* ══════════════════════════════════════════
+   SCROLL TRIGGERS (init AFTER crack sequence)
+══════════════════════════════════════════ */
+function initScrollTriggers() {
+  if (scrollTriggersInited) return;
+  scrollTriggersInited = true;
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  // Mobile: skip pinning
+  const shouldPin = !isMobile();
+
+  /* ── Section 1: Your Voice Decoded ── */
+  const s1Elements = {
+    overline:    document.getElementById('s1-overline'),
+    overlineLine: document.getElementById('s1-overline-line'),
+    headline:    document.getElementById('s1-headline'),
+    statWrap:    document.getElementById('s1-stat-wrap'),
+    body:        document.getElementById('s1-body'),
+  };
+
+  ScrollTrigger.create({
+    trigger: '#section-1',
+    start: 'top 70%',
+    once: true,
+    onEnter: () => {
+      safeVox('setScrollProgress', 0.15);
+
+      const tl = gsap.timeline();
+      tl
+        .to(s1Elements.overline, {
+          opacity: 1, x: 0, duration: 0.6,
+          ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        })
+        .to(s1Elements.overlineLine, {
+          scaleX: 1, duration: 0.4,
+          ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        }, '<')
+        .to(s1Elements.headline, {
+          opacity: 1, x: 0, duration: 0.6,
+          ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        }, '<0.07')
+        .to(s1Elements.statWrap, {
+          opacity: 1, x: 0, duration: 0.6,
+          ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        }, '<0.07')
+        .to(s1Elements.body, {
+          opacity: 1, x: 0, duration: 0.6,
+          ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+        }, '<0.07');
+
+      // Stat counter: 0 → 11.6 over 1.2s
+      animateStat();
+    }
+  });
+
+  if (shouldPin) {
+    ScrollTrigger.create({
+      trigger: '#section-1',
+      start: 'top top',
+      end: '+=100vh',
+      pin: true,
+      pinSpacing: true,
+    });
+  }
+
+  /* ── Section 2: The Intelligence ── */
+  const s2Headline = document.getElementById('s2-headline');
+  const cards = ['card-1', 'card-2', 'card-3'].map(id => document.getElementById(id));
+  // off-screen origins for the spiral-in effect
+  const cardOrigins = [
+    { x: -200, y: -150 }, // top-left
+    { x: 0,    y: 200  }, // bottom-center
+    { x: 200,  y: -150 }, // top-right
+  ];
+
+  cards.forEach((card, i) => {
+    gsap.set(card, {
+      x: cardOrigins[i].x,
+      y: cardOrigins[i].y,
+      opacity: 0,
+    });
+  });
+
+  ScrollTrigger.create({
+    trigger: '#section-2',
+    start: 'top 65%',
+    once: true,
+    onEnter: () => {
+      gsap.to(s2Headline, {
+        opacity: 1, y: 0, duration: 0.6,
+        ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      });
+
+      cards.forEach((card, i) => {
+        gsap.to(card, {
+          x: 0, y: 0, opacity: 1,
+          duration: 0.8,
+          delay: i * 0.1,
+          ease: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+        });
+      });
+    }
+  });
+
+  if (shouldPin) {
+    ScrollTrigger.create({
+      trigger: '#section-2',
+      start: 'top top',
+      end: '+=120vh',
+      pin: true,
+      pinSpacing: true,
+    });
+  }
+
+  /* ── Section 3: The Pipeline ── */
+  const s3Overline = document.getElementById('s3-overline');
+
+  ScrollTrigger.create({
+    trigger: '#section-3',
+    start: 'top 65%',
+    once: true,
+    onEnter: () => {
+      gsap.to(s3Overline, {
+        opacity: 1, duration: 0.5,
+        ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      });
+      startPipelineAnimation();
+    }
+  });
+
+  if (shouldPin) {
+    ScrollTrigger.create({
+      trigger: '#section-3',
+      start: 'top top',
+      end: '+=100vh',
+      pin: true,
+      pinSpacing: true,
+    });
+  }
+
+  /* ── Section 4: The Experience ── */
+  const s4Overline  = document.getElementById('s4-overline');
+  const s4Words     = document.querySelectorAll('.s4-headline .word');
+  const s4Body      = document.getElementById('s4-body');
+  const s4CtaWrap   = document.getElementById('s4-cta-wrap');
+
+  ScrollTrigger.create({
+    trigger: '#section-4',
+    start: 'top 65%',
+    once: true,
+    onEnter: () => {
+      const tl = gsap.timeline();
+
+      tl.to(s4Overline, {
+        opacity: 1, duration: 0.5,
+        ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      });
+
+      s4Words.forEach((word, i) => {
+        tl.to(word, {
+          opacity: 1, y: 0, duration: 0.6,
+          ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+          delay: i * 0.07,
+        }, i === 0 ? '<0.1' : '<0.07');
+      });
+
+      tl.to(s4Body, {
+        opacity: 1, y: 0, duration: 0.6,
+        ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      }, '<0.1')
+      .to(s4CtaWrap, {
+        opacity: 1, y: 0, duration: 0.6,
+        ease: 'cubic-bezier(0.16, 1, 0.3, 1)',
+      }, '<0.07');
+    }
+  });
+}
+
+/* ══════════════════════════════════════════
+   STAT COUNTER — 0 → 11.6ms
+══════════════════════════════════════════ */
+function animateStat() {
+  const statEl = document.getElementById('s1-stat');
+  const duration = 1200; // ms
+  const target = 11.6;
+  let start = null;
+
+  function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+
+  function frame(ts) {
+    if (!start) start = ts;
+    const elapsed = ts - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const value = target * easeOut(progress);
+
+    if (value < 10) {
+      statEl.textContent = Math.floor(value) + 'ms';
+    } else {
+      statEl.textContent = value.toFixed(1) + 'ms';
+    }
+
+    if (progress < 1) requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+}
+
+/* ══════════════════════════════════════════
+   PIPELINE ANIMATION
+══════════════════════════════════════════ */
+let pipelineInterval = null;
+
+function startPipelineAnimation() {
+  const nodes = [0,1,2,3,4].map(i => document.getElementById(`node-${i}`));
+  const beams = [0,1,2,3].map(i => document.getElementById(`beam-${i}`));
+  const caption = document.getElementById('s3-caption');
+
+  // Timing: t=0, 0.7, 1.4, 2.1, 2.8 for nodes
+  //         t=0.3, 1.0, 1.7, 2.4 for beams
+
+  function runCycle() {
+    // Deactivate all
+    nodes.forEach(n => n.classList.remove('active'));
+    beams.forEach(b => b.classList.remove('lit'));
+    caption.classList.remove('visible');
+
+    const schedule = [
+      { t: 0,    fn: () => nodes[0].classList.add('active') },
+      { t: 300,  fn: () => { beams[0].classList.add('lit'); } },
+      { t: 700,  fn: () => nodes[1].classList.add('active') },
+      { t: 1000, fn: () => { beams[1].classList.add('lit'); } },
+      { t: 1400, fn: () => nodes[2].classList.add('active') },
+      { t: 1700, fn: () => { beams[2].classList.add('lit'); } },
+      { t: 2100, fn: () => nodes[3].classList.add('active') },
+      { t: 2400, fn: () => { beams[3].classList.add('lit'); } },
+      { t: 2800, fn: () => { nodes[4].classList.add('active'); caption.classList.add('visible'); } },
+    ];
+
+    schedule.forEach(({ t, fn }) => setTimeout(fn, t));
+  }
+
+  runCycle();
+  pipelineInterval = setInterval(runCycle, 4000);
+}
+
+/* ══════════════════════════════════════════
+   MAGNETIC BUTTON — Section 4 CTA
+══════════════════════════════════════════ */
+const magneticBtn  = document.getElementById('s4-cta');
+
+magneticBtn.addEventListener('mousemove', (e) => {
+  const rect = magneticBtn.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top  + rect.height / 2;
+  const dx = (e.clientX - cx) * 0.3;
+  const dy = (e.clientY - cy) * 0.3;
+  // Clamp to max 6px
+  const mx = Math.max(-6, Math.min(6, dx));
+  const my = Math.max(-6, Math.min(6, dy));
+  magneticBtn.style.transform = `translate(${mx}px, ${my}px)`;
+});
+
+magneticBtn.addEventListener('mouseleave', () => {
+  magneticBtn.style.transition = 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
+  magneticBtn.style.transform = 'translate(0px, 0px)';
+  setTimeout(() => { magneticBtn.style.transition = ''; }, 650);
+});
+
+/* ══════════════════════════════════════════
+   PAGE TRANSITION — to /session
+══════════════════════════════════════════ */
+function triggerPageTransition() {
+  safeVox('setState', 3);
+
+  // Overlay fades in
+  transitionOverlay.classList.add('active');
+
+  // Landing content fades out at 0.6s
+  gsap.delayedCall(0.6, () => {
+    gsap.to(scrollContainer, {
+      opacity: 0, duration: 0.3,
+      ease: 'cubic-bezier(0.7, 0, 0.84, 0)',
+    });
+  });
+
+  // Navigate at 1.2s
+  gsap.delayedCall(1.2, () => {
+    // TODO: wire to handleStart() from UI contract
+    window.parent.postMessage('NAVIGATE_TO_SESSION', '*');
+    console.log('[VoxChord] Navigate to /session');
+    // Reset for demo loop
+    setTimeout(() => {
+      transitionOverlay.classList.remove('active');
+      gsap.set(scrollContainer, { opacity: 1 });
+    }, 800);
+  });
+}
+
+// CTA buttons wired to page transition
+document.getElementById('hero-cta-primary').addEventListener('click', triggerPageTransition);
+document.getElementById('s4-cta').addEventListener('click', triggerPageTransition);
+
+// Ghost CTA — smooth scroll to section 1
+document.getElementById('hero-cta-ghost').addEventListener('click', () => {
+  document.getElementById('section-1').scrollIntoView({ behavior: 'smooth' });
+});
+
+/* ══════════════════════════════════════════
+   BUTTON SPRING RELEASE MICRO-INTERACTION
+══════════════════════════════════════════ */
+document.querySelectorAll('.btn-primary, .btn-ghost').forEach(btn => {
+  btn.addEventListener('mouseup', () => {
+    // Spring back to hover state
+    btn.style.transition = `transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)`;
+    setTimeout(() => { btn.style.transition = ''; }, 450);
+  });
+});
+
+/* ══════════════════════════════════════════
+   UTILITY
+══════════════════════════════════════════ */
+function safeVox(method, ...args) {
+  if (window.VoxScene && typeof window.VoxScene[method] === 'function') {
+    window.VoxScene[method](...args);
+  }
+}
+</script>
+</body>
+</html>
