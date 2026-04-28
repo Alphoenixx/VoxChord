@@ -181,20 +181,15 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
       display: "flex", flexDirection: "column",
       position: "relative", overflow: "hidden",
     }}>
-      {/* Background Layer 0 */}
-      <div style={{
-        position: "absolute", inset: 0, pointerEvents: "none",
-        background: "radial-gradient(ellipse 70% 50% at 50% 40%, rgba(6,182,212,0.04) 0%, transparent 70%)",
-      }} />
+      {/* Background Layer 0 — living atmosphere */}
+      <div className="sync-atmosphere" />
 
       {/* ── Top Bar ── */}
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
         padding: "24px 32px 0", zIndex: 2, flexShrink: 0,
       }}>
-        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", textTransform: "uppercase" }}>
-          Playback
-        </div>
+        <div className="phase-overline">Playback</div>
         {/* Candidate selector */}
         {phrase.source === "algorithm" && phrase.candidates.length > 1 && (
           <div style={{ display: "flex", gap: 8 }}>
@@ -208,9 +203,7 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
             ))}
           </div>
         )}
-        <button onClick={onResing} className="end-session-btn" style={{ padding: "8px 20px", fontSize: 9 }}>
-          RESTART
-        </button>
+        <button onClick={onResing} className="results-restart-btn" title="Restart">↺</button>
       </div>
 
       {/* ── Karaoke Core ── */}
@@ -229,7 +222,7 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
               transition={{ duration: 0.5, ease: ENTRANCE }}
               style={{ position: "absolute" }}
             >
-              <div className="result-chord-name" style={{ fontSize: "clamp(4rem, 12vw, 8rem)" }}>
+              <div className="karaoke-chord">
                 {activeChord?.chord?.display ?? "—"}
               </div>
             </motion.div>
@@ -239,15 +232,11 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
           {nextChord && (
             <motion.div
               key={`next-${activeChordIdx}`}
-              initial={{ opacity: 0 }} animate={{ opacity: 0.2 }}
-              style={{ position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)" }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              className="karaoke-next"
             >
-              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, color: "var(--white)", fontWeight: 100 }}>
-                {nextChord.chord.display}
-              </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: "0.3em", color: "var(--muted)", marginTop: 4, textAlign: "right" }}>
-                NEXT
-              </div>
+              <div className="karaoke-next-chord">{nextChord.chord.display}</div>
+              <div className="karaoke-next-label">NEXT</div>
             </motion.div>
           )}
         </div>
@@ -258,24 +247,20 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
         {/* ── Scrub bar with chord markers ── */}
         <div style={{ width: "100%", maxWidth: 640 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>
-              {fmt(playbackPos * duration)}
-            </span>
-            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>
-              {fmt(duration)}
-            </span>
+            <span className="sync-time-total">{fmt(playbackPos * duration)}</span>
+            <span className="sync-time-total">{fmt(duration)}</span>
           </div>
-          <div className="scrub-bar-track" onClick={handleScrub} style={{ cursor: "pointer", position: "relative", height: 6, borderRadius: 3 }}>
+          <div className="results-scrub-track" onClick={handleScrub}>
             {/* Chord markers */}
             {timeline.map((evt, i) => (
-              <div key={i} style={{
-                position: "absolute", top: -2, bottom: -2, width: 1,
-                background: i === activeChordIdx ? "rgba(124,58,237,0.8)" : "rgba(255,255,255,0.15)",
+              <div key={i} className="sync-marker" style={{
                 left: `${(evt.time / duration) * 100}%`,
-                transition: "background 0.3s",
-              }} />
+                opacity: i === activeChordIdx ? 1 : 0.3,
+              }}>
+                <div className="sync-marker-line" />
+              </div>
             ))}
-            <div className="scrub-fill" style={{ width: `${playbackPos * 100}%`, height: "100%", borderRadius: 3 }} />
+            <div className="results-scrub-fill" style={{ width: `${playbackPos * 100}%` }} />
           </div>
         </div>
 
@@ -284,7 +269,7 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
           {timeline.map((evt, i) => {
             const state = i < activeChordIdx ? "past" : i === activeChordIdx ? "active-chord" : "upcoming";
             return (
-              <div key={i} className={`timeline-pill ${state}`}
+              <div key={i} className={`results-timeline-pill ${state}`}
                 onClick={() => { setPlaybackPos(evt.time / duration); setActiveChordIdx(i); }}
               >
                 <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: state === "active-chord" ? "var(--white)" : "var(--muted)" }}>
@@ -300,22 +285,17 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
       </div>
 
       {/* ── Control Deck ── */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "20px 32px", borderTop: "1px solid rgba(255,255,255,0.05)",
-        zIndex: 2, flexShrink: 0, background: "rgba(5,5,8,0.6)", backdropFilter: "blur(16px)",
-      }}>
+      <div className="control-deck" style={{ zIndex: 2, flexShrink: 0 }}>
         {/* Play controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <button className="ctrl-btn" onClick={() => {
+          <button className="results-restart-btn" onClick={() => {
             if (playbackRef.current && isPlaying) { playbackRef.current.stop(); }
             setPlaybackPos(0); setActiveChordIdx(0); setIsPlaying(false);
-          }} title="Restart" style={{ fontSize: 14 }}>↺</button>
+          }} title="Restart">↺</button>
 
           <button
-            className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
+            className={`results-play-btn ${isPlaying ? "is-playing" : ""}`}
             onClick={togglePlay} title="Play/Pause"
-            style={{ width: 56, height: 56, fontSize: 18 }}
           >
             {isPlaying ? "⏸" : "▶"}
           </button>
@@ -323,25 +303,21 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
 
         {/* Volume mixer */}
         <div style={{ display: "flex", gap: 32 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, width: 120 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: "0.2em", color: "var(--muted)", textTransform: "uppercase" }}>Voice</span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "rgba(255,255,255,0.25)" }}>{Math.round(voiceVol * 100)}%</span>
+          <div className="mixer-slider violet">
+            <div className="mixer-slider-label">
+              <span className="mixer-slider-name">Voice</span>
+              <span className="mixer-slider-value">{Math.round(voiceVol * 100)}%</span>
             </div>
             <input type="range" min="0" max="1" step="0.05" value={voiceVol}
-              onChange={e => setVoiceVol(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--violet)" }}
-            />
+              onChange={e => setVoiceVol(Number(e.target.value))} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, width: 120 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: "0.2em", color: "var(--muted)", textTransform: "uppercase" }}>Chords</span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "rgba(255,255,255,0.25)" }}>{Math.round(chordVol * 100)}%</span>
+          <div className="mixer-slider cyan">
+            <div className="mixer-slider-label">
+              <span className="mixer-slider-name">Chords</span>
+              <span className="mixer-slider-value">{Math.round(chordVol * 100)}%</span>
             </div>
             <input type="range" min="0" max="1" step="0.05" value={chordVol}
-              onChange={e => setChordVol(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--cyan)" }}
-            />
+              onChange={e => setChordVol(Number(e.target.value))} />
           </div>
         </div>
       </div>

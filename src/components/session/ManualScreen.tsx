@@ -173,22 +173,22 @@ export default function ManualScreen({
 
       <AnimatePresence mode="wait">
 
-        {/* ═══ PHASE 1 — CHORD INPUT ═══ */}
+        {/* ═══ PHASE 1 — THE FOUNDATION ═══ */}
         {phase === 1 && (
           <motion.div key="p1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, filter: "blur(12px)" }} transition={{ duration: 0.8, ease: ENTRANCE }}
             style={{ width: "100%", maxWidth: 640, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, padding: "0 32px" }}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: OSMO, delay: 0.1 }}
-              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", marginBottom: 48, textTransform: "uppercase" }}>
+              className="phase-overline" style={{ marginBottom: 48 }}>
               Phase 01 — The Foundation
             </motion.div>
             <motion.textarea initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: ENTRANCE, delay: 0.2 }}
-              className="manual-textarea" placeholder="Am   G   F   C" value={manualInput} onChange={(e) => handleInput(e.target.value)}
-              style={{ textAlign: "center", fontSize: 18, minHeight: 96, marginBottom: 32, background: "transparent", borderColor: "rgba(255,255,255,0.06)" }} />
+              className="phase1-textarea" placeholder="Am   G   F   C" value={manualInput} onChange={(e) => handleInput(e.target.value)}
+              style={{ marginBottom: 32 }} />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", minHeight: 40, marginBottom: 40 }}>
               <AnimatePresence>
                 {parsedChords.map((c, i) => (
                   <motion.div key={`${c.display}-${i}`} initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.85 }}
-                    transition={{ duration: 0.35, ease: MICRO, delay: i * 0.04 }} className={`parsed-pill ${c.root ? "valid" : "invalid"}`}>
+                    transition={{ duration: 0.35, ease: MICRO, delay: i * 0.04 }} className={`chord-pill ${c.root ? "valid" : "invalid"}`}>
                     {c.display || "?"}
                   </motion.div>
                 ))}
@@ -197,15 +197,15 @@ export default function ManualScreen({
             <AnimatePresence>
               {detectedOriginalKey && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}
-                  style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)", letterSpacing: "0.2em", marginBottom: 32 }}>
-                  DETECTED KEY: <span style={{ color: "var(--white)" }}>{detectedOriginalKey.key} {detectedOriginalKey.mode}</span>
+                  className="key-badge" style={{ marginBottom: 32 }}>
+                  DETECTED KEY: <span className="key-value">{detectedOriginalKey.key} {detectedOriginalKey.mode}</span>
                 </motion.div>
               )}
             </AnimatePresence>
             <AnimatePresence>
               {validChords.length > 0 && (
                 <motion.button initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.6, ease: ENTRANCE }}
-                  onClick={() => setPhase(2)} className="end-session-btn" style={{ padding: "14px 48px", letterSpacing: "0.25em", fontSize: 10, borderColor: "rgba(124,58,237,0.3)" }}>
+                  onClick={() => setPhase(2)} className="proceed-btn">
                   PROCEED TO VOCALS →
                 </motion.button>
               )}
@@ -213,31 +213,34 @@ export default function ManualScreen({
           </motion.div>
         )}
 
-        {/* ═══ PHASE 2 — RECORDING ═══ */}
+        {/* ═══ PHASE 2 — THE PERFORMANCE ═══ */}
         {phase === 2 && (
           <motion.div key="p2" initial={{ opacity: 0, y: 24, filter: "blur(10px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, y: -16 }}
             transition={{ duration: 0.9, ease: ENTRANCE }} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, maxWidth: 480, padding: "0 32px" }}>
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", marginBottom: 64, textTransform: "uppercase" }}>Phase 02 — The Performance</div>
+            <div className="phase-overline" style={{ marginBottom: 64 }}>Phase 02 — The Performance</div>
             <div style={{ textAlign: "center", marginBottom: 64 }}>
-              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(2rem, 5vw, 3rem)", color: "var(--white)", lineHeight: 1.1, marginBottom: 16 }}>Sing the melody.</div>
+              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(2rem, 5vw, 3rem)", color: "var(--white)", lineHeight: 1.1, marginBottom: 16, letterSpacing: "-0.03em" }}>Sing the melody.</div>
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--muted)", letterSpacing: "0.15em", lineHeight: 1.8 }}>Take your time. VoxChord will follow you.</div>
             </div>
-            <motion.div onClick={handleRecordToggle} whileTap={{ scale: 0.94 }} style={{ position: "relative", cursor: "pointer" }}>
+            <motion.div onClick={handleRecordToggle} whileTap={{ scale: 0.94 }} style={{ position: "relative", cursor: "pointer", marginBottom: 24 }}>
+              {/* Ambient glow + orbital ring (recording only) */}
               {recordingState === "recording" && (
-                <motion.div animate={{ opacity: [0.3, 0.7, 0.3], scale: [1, 1.15, 1] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  style={{ position: "absolute", inset: -16, borderRadius: "50%", background: "rgba(239,68,68,0.15)", filter: "blur(16px)" }} />
+                <>
+                  <div className="record-orb-glow" />
+                  <div className="record-orb-ring" />
+                </>
               )}
-              <div className={`record-btn ${recordingState === "recording" ? "recording" : recordingState === "analyzing" ? "analyzing" : ""}`}><div className="record-btn-inner" /></div>
+              <div className={`record-orb ${recordingState === "recording" ? "is-recording" : recordingState === "analyzing" ? "is-analyzing" : ""}`}>
+                <div className="record-orb-inner" />
+              </div>
             </motion.div>
-            <div style={{ marginTop: 16, height: 24, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <AnimatePresence mode="wait">
-                <motion.div key={recordingState} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.3 }}
-                  className="record-label" style={{ color: recordingState === "recording" ? "var(--red)" : "var(--muted)" }}>
-                  {recordingState === "idle" ? "TAP TO RECORD" : recordingState === "recording" ? fmt(recordingDuration) : "ANALYZING…"}
-                </motion.div>
-              </AnimatePresence>
-            </div>
-            <button onClick={() => setPhase(1)} className="end-session-btn" style={{ marginTop: 48, padding: "8px 24px", fontSize: 9 }}>← BACK TO CHORDS</button>
+            <AnimatePresence mode="wait">
+              <motion.div key={recordingState} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.3 }}
+                className="record-timer" style={{ color: recordingState === "recording" ? "var(--red)" : "var(--muted)", marginBottom: 8 }}>
+                {recordingState === "idle" ? "TAP TO RECORD" : recordingState === "recording" ? fmt(recordingDuration) : "ANALYZING…"}
+              </motion.div>
+            </AnimatePresence>
+            <button onClick={() => setPhase(1)} className="end-session-btn" style={{ marginTop: 40, padding: "8px 24px", fontSize: 9 }}>← BACK TO CHORDS</button>
           </motion.div>
         )}
 
