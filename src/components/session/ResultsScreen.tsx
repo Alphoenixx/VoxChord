@@ -1,9 +1,15 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Phrase, usePhraseStore } from "@/stores/usePhraseStore";
 import { PlaybackEngine } from "@/audio/PlaybackEngine";
+import { ShimmerResolver, SHIMMER_FADEOUT_MS, SHIMMER_GAP_MS, SHIMMER_OFFSET_S } from "@/audio/ShimmerResolver";
 import GuitarChord from "./GuitarChord";
+
+/* ── CLAUDE.md Motion Constants ── */
+const ENTRANCE = [0.16, 1, 0.3, 1]   as const;
+const OSMO     = [0.625, 0.05, 0, 1] as const;
 
 interface ResultsScreenProps {
   phrase: Phrase;
@@ -14,23 +20,114 @@ interface ResultsScreenProps {
 export default function ResultsScreen({ phrase, audioContext, onResing }: ResultsScreenProps) {
   const { selectCandidate } = usePhraseStore();
   const [isPlaying, setIsPlaying] = useState(false);
-  const [loopEnabled, setLoopEnabled] = useState(false);
   const [playbackPos, setPlaybackPos] = useState(0);
   const [activeChordIdx, setActiveChordIdx] = useState(0);
+  const [voiceVol, setVoiceVol] = useState(1.0);
+  const [chordVol, setChordVol] = useState(0.7);
+
   const playbackRef = useRef<PlaybackEngine | null>(null);
   const rafRef = useRef<number>(0);
+  const voiceGainRef = useRef<GainNode | null>(null);
+  const chordGainRef = useRef<GainNode | null>(null);
+  const shimmerBuffersRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const activeShimmerRef = useRef<AudioBufferSourceNode | null>(null);
 
   const candidate = phrase.candidates[phrase.selectedCandidate];
   const timeline = candidate?.chordTimeline ?? [];
   const duration = phrase.duration || 1;
   const activeChord = timeline[activeChordIdx];
+  const nextChord = timeline[activeChordIdx + 1];
 
-  // Init playback engine with event handler
+  /* ── Preload shimmer audio files ── */
+  useEffect(() => {
+    const unique = new Set(timeline.map(t => t.chord.display));
+    const loadAll = async () => {
+      for (const chordName of unique) {
+        const parsed = { root: "", suffix: "", bass: null, type: "major" as const, display: chordName, pitchClass: 0 };
+        // Re-derive type from display for shimmer resolution
+        const isMinor = chordName.endsWith("m") && !chordName.endsWith("dim") && !chordName.endsWith("maj");
+        const rootMatch = chordName.match(/^([A-G][♭♯b#]?)/);
+        if (!rootMatch) continue;
+        const root = rootMatch[1];
+        const resolvedParsed = { ...parsed, root, type: (isMinor ? "minor" : "major") as any };
+        const url = ShimmerResolver.resolve(resolvedParsed);
+        try {
+          const resp = await fetch(url);
+          if (resp.ok) {
+            const arrayBuf = await resp.arrayBuffer();
+            const audioBuf = await audioContext.decodeAudioData(arrayBuf);
+            shimmerBuffersRef.current.set(chordName, audioBuf);
+          }
+        } catch (e) {
+          console.warn(`Failed to load shimmer: ${url}`, e);
+        }
+      }
+    };
+    loadAll();
+  }, [timeline, audioContext]);
+
+  /* ── Gain nodes for independent volume ── */
+  useEffect(() => {
+    const vGain = audioContext.createGain();
+    vGain.gain.value = voiceVol;
+    vGain.connect(audioContext.destination);
+    voiceGainRef.current = vGain;
+
+    const cGain = audioContext.createGain();
+    cGain.gain.value = chordVol;
+    cGain.connect(audioContext.destination);
+    chordGainRef.current = cGain;
+
+    return () => { vGain.disconnect(); cGain.disconnect(); };
+  }, [audioContext]);
+
+  useEffect(() => {
+    if (voiceGainRef.current) voiceGainRef.current.gain.value = voiceVol;
+  }, [voiceVol]);
+  useEffect(() => {
+    if (chordGainRef.current) chordGainRef.current.gain.value = chordVol;
+  }, [chordVol]);
+
+  /* ── Shimmer trigger on chord change ── */
+  const triggerShimmer = useCallback((chordDisplay: string, chordDuration: number) => {
+    if (!chordGainRef.current) return;
+    const buffer = shimmerBuffersRef.current.get(chordDisplay);
+    if (!buffer) return;
+
+    // Fade out previous
+    if (activeShimmerRef.current) {
+      try {
+        const prev = activeShimmerRef.current;
+        const fadeGain = audioContext.createGain();
+        fadeGain.gain.value = 1;
+        fadeGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + SHIMMER_FADEOUT_MS / 1000);
+        prev.disconnect();
+        prev.connect(fadeGain).connect(chordGainRef.current!);
+        setTimeout(() => { try { prev.stop(); } catch {} }, SHIMMER_FADEOUT_MS);
+      } catch {}
+    }
+
+    // Schedule new shimmer after gap
+    setTimeout(() => {
+      if (!chordGainRef.current) return;
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(chordGainRef.current);
+      const playDur = Math.max(0.3, chordDuration - (SHIMMER_FADEOUT_MS + SHIMMER_GAP_MS) / 1000);
+      source.start(0, SHIMMER_OFFSET_S, playDur);
+      activeShimmerRef.current = source;
+    }, SHIMMER_GAP_MS);
+  }, [audioContext]);
+
+  /* ── Playback engine ── */
   useEffect(() => {
     playbackRef.current = new PlaybackEngine(audioContext, (event) => {
       if (event.type === "chordChange") {
         setActiveChordIdx(event.index);
-        setPlaybackPos(event.progress);
+        const chordEvt = timeline[event.index];
+        if (chordEvt) {
+          triggerShimmer(chordEvt.chord.display, chordEvt.endTime - chordEvt.time);
+        }
       } else if (event.type === "ended") {
         setIsPlaying(false);
         setPlaybackPos(0);
@@ -38,19 +135,13 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
       }
     });
     return () => { playbackRef.current?.stop(); };
-  }, [audioContext]);
+  }, [audioContext, timeline, triggerShimmer]);
 
-  // RAF loop for smooth scrub bar updates during playback
-  const startPlaybackLoop = useCallback(() => {
+  const startLoop = useCallback(() => {
     const tick = () => {
       if (!playbackRef.current) return;
-      const elapsed = playbackRef.current.getElapsed();
-      const progress = Math.min(elapsed / duration, 1);
-      setPlaybackPos(progress);
-
-      if (playbackRef.current.isPlaying()) {
-        rafRef.current = requestAnimationFrame(tick);
-      }
+      setPlaybackPos(Math.min(playbackRef.current.getElapsed() / duration, 1));
+      if (playbackRef.current.isPlaying()) rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
   }, [duration]);
@@ -59,19 +150,15 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
     if (!playbackRef.current || !phrase.audioBuffer) return;
     if (isPlaying) {
       playbackRef.current.stop();
+      try { activeShimmerRef.current?.stop(); } catch {}
       cancelAnimationFrame(rafRef.current);
       setIsPlaying(false);
     } else {
-      const offset = playbackPos * duration;
-      playbackRef.current.play(phrase.audioBuffer, timeline, offset);
+      playbackRef.current.play(phrase.audioBuffer, timeline, playbackPos * duration);
       setIsPlaying(true);
-      startPlaybackLoop();
+      startLoop();
     }
-  }, [isPlaying, playbackPos, duration, timeline, phrase.audioBuffer, startPlaybackLoop]);
-
-  const toggleLoop = useCallback(() => {
-    setLoopEnabled((v) => !v);
-  }, []);
+  }, [isPlaying, playbackPos, duration, timeline, phrase.audioBuffer, startLoop]);
 
   const handleScrub = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -79,117 +166,184 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
     setPlaybackPos(pos);
     if (playbackRef.current && isPlaying) {
       playbackRef.current.seek(pos * duration);
-      startPlaybackLoop();
+      startLoop();
     }
-  }, [isPlaying, duration, startPlaybackLoop]);
+  }, [isPlaying, duration, startLoop]);
 
-  const handleSelectCandidate = useCallback((idx: number) => {
-    selectCandidate(idx);
-    setActiveChordIdx(0);
-  }, [selectCandidate]);
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 
-  const formatTime = (s: number) => {
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, "0")}`;
-  };
-
-  const chordName = activeChord?.chord?.display ?? timeline[0]?.chord?.display ?? "—";
-
+  /* ════════════════════════════════════════
+     RENDER — Cinematic Karaoke Playback
+     ════════════════════════════════════════ */
   return (
-    <div style={{ maxWidth: 800, width: "100%", margin: "0 auto", padding: "40px 24px" }}>
-      {/* Candidate Selector */}
-      {phrase.source === "algorithm" && phrase.candidates.length > 1 && (
-        <div className="candidate-row">
-          {phrase.candidates.map((c, i) => (
-            <div
-              key={i}
-              className={`candidate-card ${phrase.selectedCandidate === i ? "selected" : ""}`}
-              onClick={() => handleSelectCandidate(i)}
-            >
-              <div style={{ fontFamily: "'Space Grotesk'", fontSize: 14, color: "var(--white)", fontWeight: 400 }}>
+    <div style={{
+      width: "100%", height: "calc(100vh - 48px)",
+      display: "flex", flexDirection: "column",
+      position: "relative", overflow: "hidden",
+    }}>
+      {/* Background Layer 0 */}
+      <div style={{
+        position: "absolute", inset: 0, pointerEvents: "none",
+        background: "radial-gradient(ellipse 70% 50% at 50% 40%, rgba(6,182,212,0.04) 0%, transparent 70%)",
+      }} />
+
+      {/* ── Top Bar ── */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        padding: "24px 32px 0", zIndex: 2, flexShrink: 0,
+      }}>
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", textTransform: "uppercase" }}>
+          Playback
+        </div>
+        {/* Candidate selector */}
+        {phrase.source === "algorithm" && phrase.candidates.length > 1 && (
+          <div style={{ display: "flex", gap: 8 }}>
+            {phrase.candidates.map((c, i) => (
+              <button key={i} onClick={() => { selectCandidate(i); setActiveChordIdx(0); }}
+                className={phrase.selectedCandidate === i ? "mode-pill active" : "mode-pill"}
+                style={{ padding: "6px 14px", fontSize: 9 }}
+              >
                 {c.key} {c.mode}
+              </button>
+            ))}
+          </div>
+        )}
+        <button onClick={onResing} className="end-session-btn" style={{ padding: "8px 20px", fontSize: 9 }}>
+          RESTART
+        </button>
+      </div>
+
+      {/* ── Karaoke Core ── */}
+      <div style={{
+        flex: 1, display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        zIndex: 1, padding: "0 32px", gap: 32, position: "relative",
+      }}>
+        {/* Active chord — massive typography */}
+        <div style={{ position: "relative", width: "100%", maxWidth: 800, textAlign: "center", minHeight: 160, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <AnimatePresence mode="popLayout">
+            <motion.div key={activeChordIdx}
+              initial={{ opacity: 0, scale: 0.92, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 1.05, y: -8 }}
+              transition={{ duration: 0.5, ease: ENTRANCE }}
+              style={{ position: "absolute" }}
+            >
+              <div className="result-chord-name" style={{ fontSize: "clamp(4rem, 12vw, 8rem)" }}>
+                {activeChord?.chord?.display ?? "—"}
               </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.15em", color: "var(--muted)", marginTop: 2 }}>
-                INTERPRETATION {i + 1}
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Next chord whisper */}
+          {nextChord && (
+            <motion.div
+              key={`next-${activeChordIdx}`}
+              initial={{ opacity: 0 }} animate={{ opacity: 0.2 }}
+              style={{ position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)" }}
+            >
+              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 32, color: "var(--white)", fontWeight: 100 }}>
+                {nextChord.chord.display}
               </div>
-              {phrase.selectedCandidate === i && (
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "rgba(124,58,237,0.8)", marginTop: 4 }}>
-                  Selected
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: "0.3em", color: "var(--muted)", marginTop: 4, textAlign: "right" }}>
+                NEXT
+              </div>
+            </motion.div>
+          )}
+        </div>
+
+        {/* Guitar chord diagram */}
+        <GuitarChord chord={activeChord?.chord?.display ?? "—"} size={100} />
+
+        {/* ── Scrub bar with chord markers ── */}
+        <div style={{ width: "100%", maxWidth: 640 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>
+              {fmt(playbackPos * duration)}
+            </span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>
+              {fmt(duration)}
+            </span>
+          </div>
+          <div className="scrub-bar-track" onClick={handleScrub} style={{ cursor: "pointer", position: "relative", height: 6, borderRadius: 3 }}>
+            {/* Chord markers */}
+            {timeline.map((evt, i) => (
+              <div key={i} style={{
+                position: "absolute", top: -2, bottom: -2, width: 1,
+                background: i === activeChordIdx ? "rgba(124,58,237,0.8)" : "rgba(255,255,255,0.15)",
+                left: `${(evt.time / duration) * 100}%`,
+                transition: "background 0.3s",
+              }} />
+            ))}
+            <div className="scrub-fill" style={{ width: `${playbackPos * 100}%`, height: "100%", borderRadius: 3 }} />
+          </div>
+        </div>
+
+        {/* ── Chord timeline pills ── */}
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, maxWidth: 640, width: "100%" }}>
+          {timeline.map((evt, i) => {
+            const state = i < activeChordIdx ? "past" : i === activeChordIdx ? "active-chord" : "upcoming";
+            return (
+              <div key={i} className={`timeline-pill ${state}`}
+                onClick={() => { setPlaybackPos(evt.time / duration); setActiveChordIdx(i); }}
+              >
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: state === "active-chord" ? "var(--white)" : "var(--muted)" }}>
+                  {evt.chord.display}
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Phrase Card Top */}
-      <div style={{ display: "flex", gap: 40, alignItems: "flex-start", marginBottom: 32 }}>
-        {/* Guitar Chord Display */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-          <div className="result-chord-name">{chordName}</div>
-          <GuitarChord chord={chordName} />
-        </div>
-
-        {/* Scrub + Controls */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          {/* Scrub Bar */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>
-                {formatTime(playbackPos * duration)}
-              </span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>
-                {formatTime(duration)}
-              </span>
-            </div>
-            <div className="scrub-bar-track" onClick={handleScrub} style={{ cursor: "pointer" }}>
-              <div className="scrub-fill" style={{ width: `${playbackPos * 100}%` }} />
-            </div>
-          </div>
-
-          {/* Playback Controls */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16 }}>
-            <button className={`ctrl-btn ${loopEnabled ? "active" : ""}`} onClick={toggleLoop} title="Loop">↺</button>
-            <button
-              className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
-              onClick={togglePlay}
-              title="Play/Pause"
-              style={{ width: 60, height: 60, fontSize: 20, background: "var(--glass-strong)", borderColor: "rgba(255,255,255,0.12)", color: "var(--white)" }}
-            >
-              {isPlaying ? "⏸" : "▶"}
-            </button>
-            <button className="ctrl-btn" onClick={onResing} title="Re-Sing" style={{ fontSize: 14 }}>🎤</button>
-          </div>
+                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
+                  {(evt.endTime - evt.time).toFixed(1)}s
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Chord Timeline */}
-      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.3em", color: "var(--muted)", marginBottom: 12 }}>
-        CHORD TIMELINE
-      </div>
-      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8 }}>
-        {timeline.map((evt, i) => {
-          const state = i < activeChordIdx ? "past" : i === activeChordIdx ? "active-chord" : "upcoming";
-          return (
-            <div
-              key={i}
-              className={`timeline-pill ${state}`}
-              onClick={() => {
-                const pos = evt.time / duration;
-                setPlaybackPos(pos);
-                setActiveChordIdx(i);
-              }}
-            >
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, color: state === "active-chord" ? "var(--white)" : "var(--muted)" }}>
-                {evt.chord.display}
-              </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "var(--muted)", marginTop: 2 }}>
-                {(evt.endTime - evt.time).toFixed(1)}s
-              </div>
+      {/* ── Control Deck ── */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "20px 32px", borderTop: "1px solid rgba(255,255,255,0.05)",
+        zIndex: 2, flexShrink: 0, background: "rgba(5,5,8,0.6)", backdropFilter: "blur(16px)",
+      }}>
+        {/* Play controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <button className="ctrl-btn" onClick={() => {
+            if (playbackRef.current && isPlaying) { playbackRef.current.stop(); }
+            setPlaybackPos(0); setActiveChordIdx(0); setIsPlaying(false);
+          }} title="Restart" style={{ fontSize: 14 }}>↺</button>
+
+          <button
+            className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
+            onClick={togglePlay} title="Play/Pause"
+            style={{ width: 56, height: 56, fontSize: 18 }}
+          >
+            {isPlaying ? "⏸" : "▶"}
+          </button>
+        </div>
+
+        {/* Volume mixer */}
+        <div style={{ display: "flex", gap: 32 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, width: 120 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: "0.2em", color: "var(--muted)", textTransform: "uppercase" }}>Voice</span>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "rgba(255,255,255,0.25)" }}>{Math.round(voiceVol * 100)}%</span>
             </div>
-          );
-        })}
+            <input type="range" min="0" max="1" step="0.05" value={voiceVol}
+              onChange={e => setVoiceVol(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--violet)" }}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, width: 120 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, letterSpacing: "0.2em", color: "var(--muted)", textTransform: "uppercase" }}>Chords</span>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "rgba(255,255,255,0.25)" }}>{Math.round(chordVol * 100)}%</span>
+            </div>
+            <input type="range" min="0" max="1" step="0.05" value={chordVol}
+              onChange={e => setChordVol(Number(e.target.value))}
+              style={{ width: "100%", accentColor: "var(--cyan)" }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
