@@ -3,15 +3,14 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePhraseStore } from "@/stores/usePhraseStore";
-import { ChordParser } from "@/audio/ChordParser";
+import { ChordParser, ParsedChord } from "@/audio/ChordParser";
 import { KeyDetector } from "@/audio/KeyDetector";
 import { Transposer } from "@/audio/Transposer";
+import { ChordEvent } from "@/audio/ChordMapper";
 
-/* ── CLAUDE.md Motion Constants ── */
-const OSMO     = [0.625, 0.05, 0, 1] as const;   // text reveal
-const ENTRANCE = [0.16, 1, 0.3, 1]   as const;   // scroll reveal / modal open
-const EXIT_E   = [0.55, 0, 1, 0.45]  as const;   // exit — fast, don't linger
-const MICRO    = [0.34, 1.56, 0.64, 1] as const;  // hover / tap overshoot
+const OSMO = [0.625, 0.05, 0, 1] as const;
+const ENTRANCE = [0.16, 1, 0.3, 1] as const;
+const MICRO = [0.34, 1.56, 0.64, 1] as const;
 
 interface ManualScreenProps {
   onStartRecording: () => void;
@@ -29,31 +28,34 @@ export default function ManualScreen({
   const {
     manualInput, parsedChords, detectedOriginalKey,
     tempManualData, transposedChords, recordingState,
-    tapTimestamps, timingMode,
+    chordMarkers,
     setManualInput, setParsedChords, setDetectedOriginalKey,
-    setTransposedChords, addTapTimestamp, resetTapTimestamps, setTimingMode,
+    setTransposedChords,
+    addChordMarker, removeLastChordMarker, resetChordMarkers, updateChordMarkerTime,
     setSession, setTempManualData,
   } = usePhraseStore();
 
   const [phase, setPhase] = useState<1 | 2 | 3 | 4>(1);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ── Phase 2 → 3 auto-advance when recording completes ── */
+  // Phase 3 audio playback state
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playTime, setPlayTime] = useState(0);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const startTimeRef = useRef(0);
+  const offsetRef = useRef(0);
+  const rafRef = useRef(0);
+
   useEffect(() => {
     if (phase === 2 && tempManualData?.audioBuffer) setPhase(3);
   }, [phase, tempManualData]);
 
-  /* ── Phase 3 → 4: compute transposition when user finalises timing ── */
-  const proceedToTransposition = useCallback(() => {
-    if (!tempManualData || !detectedOriginalKey) return;
-    const offset = Transposer.computeOffset(detectedOriginalKey.key, tempManualData.singingKey.key);
-    const transposed = ChordParser.transposeAll(parsedChords, offset);
-    setTransposedChords(transposed);
-    setTimingMode("tap");
-    setPhase(4);
-  }, [tempManualData, detectedOriginalKey, parsedChords, setTransposedChords, setTimingMode]);
+  // Cleanup audio on unmount
+  useEffect(() => () => {
+    try { sourceRef.current?.stop(); } catch {}
+    cancelAnimationFrame(rafRef.current);
+  }, []);
 
-  /* ── Chord input parser (debounced 300ms) ── */
   const handleInput = useCallback((text: string) => {
     setManualInput(text);
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -63,9 +65,7 @@ export default function ManualScreen({
       if (parsed.length > 0) {
         const detected = KeyDetector.detectKeyFromChords(parsed);
         if (detected) setDetectedOriginalKey(detected);
-      } else {
-        setDetectedOriginalKey(null);
-      }
+      } else setDetectedOriginalKey(null);
     }, 300);
   }, [setManualInput, setParsedChords, setDetectedOriginalKey]);
 
@@ -74,29 +74,80 @@ export default function ManualScreen({
     else if (recordingState === "recording") onStopRecording();
   }, [recordingState, onStartRecording, onStopRecording]);
 
-  /* ── Phase 3: spacebar marker drop ── */
-  useEffect(() => {
-    if (phase !== 3) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        e.preventDefault();
-        if (tapTimestamps.length < parsedChords.length && tempManualData) {
-          const now = tapTimestamps.length === 0 ? 0 : tapTimestamps[tapTimestamps.length - 1] + 0.3;
-          addTapTimestamp(Math.min(now, tempManualData.duration));
-        }
-      }
+  /* ── Phase 3: Play/pause recorded voice ── */
+  const playVoice = useCallback(() => {
+    if (!audioContext || !tempManualData?.audioBuffer) return;
+    if (isPlaying) {
+      try { sourceRef.current?.stop(); } catch {}
+      cancelAnimationFrame(rafRef.current);
+      offsetRef.current = playTime;
+      setIsPlaying(false);
+      return;
+    }
+    const src = audioContext.createBufferSource();
+    src.buffer = tempManualData.audioBuffer;
+    src.connect(audioContext.destination);
+    src.onended = () => {
+      cancelAnimationFrame(rafRef.current);
+      setIsPlaying(false);
+      setPlayTime(0);
+      offsetRef.current = 0;
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [phase, tapTimestamps, parsedChords.length, tempManualData, addTapTimestamp]);
+    const off = offsetRef.current;
+    src.start(0, off);
+    startTimeRef.current = audioContext.currentTime - off;
+    sourceRef.current = src;
+    setIsPlaying(true);
+    const tick = () => {
+      const t = audioContext.currentTime - startTimeRef.current;
+      setPlayTime(Math.min(t, tempManualData.duration));
+      if (t < tempManualData.duration) rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, [audioContext, tempManualData, isPlaying, playTime]);
 
-  /* ── Phase 4: finalise and push to Results ── */
+  /* ── Phase 3: Click a chord to drop marker at current playback time ── */
+  const dropChordMarker = useCallback((chord: ParsedChord) => {
+    if (!tempManualData) return;
+    const time = Math.min(playTime, tempManualData.duration);
+    addChordMarker({ chord, time });
+  }, [playTime, tempManualData, addChordMarker]);
+
+  /* ── Phase 3→4: build timeline from markers and transpose ── */
+  const proceedToTransposition = useCallback(() => {
+    if (!tempManualData || !detectedOriginalKey || chordMarkers.length === 0) return;
+    const offset = Transposer.computeOffset(detectedOriginalKey.key, tempManualData.singingKey.key);
+    // Transpose the unique chords from Phase 1
+    const transposed = ChordParser.transposeAll(parsedChords, offset);
+    setTransposedChords(transposed);
+    setPhase(4);
+  }, [tempManualData, detectedOriginalKey, parsedChords, chordMarkers, setTransposedChords]);
+
+  /* ── Phase 4: finalise — build ChordEvent[] from markers ── */
+  /* +2s buffer for the last chord so it actually rings out */
+  const LAST_CHORD_BUFFER = 2;
   const handleUseChords = useCallback(() => {
-    if (!tempManualData || transposedChords.length === 0) return;
-    const timeline = Transposer.applyTapTimestamps(transposedChords, tapTimestamps, tempManualData.duration);
+    if (!tempManualData || chordMarkers.length === 0 || !detectedOriginalKey) return;
+    const dur = tempManualData.duration;
+    const offset = Transposer.computeOffset(detectedOriginalKey.key, tempManualData.singingKey.key);
+    const sorted = [...chordMarkers].sort((a, b) => a.time - b.time);
+    const timeline: ChordEvent[] = sorted.map((m, i) => {
+      const transposed = ChordParser.transposeChord(m.chord, offset);
+      const isLast = i === sorted.length - 1;
+      const endTime = isLast ? dur + LAST_CHORD_BUFFER : sorted[i + 1].time;
+      return {
+        time: m.time,
+        endTime,
+        chord: {
+          root: transposed.root,
+          type: transposed.type === "minor" || transposed.type === "dim" ? transposed.type : "major",
+          display: transposed.display,
+        },
+      };
+    });
     setSession({
       id: crypto.randomUUID(),
-      duration: tempManualData.duration,
+      duration: dur + LAST_CHORD_BUFFER,
       capturedAt: Date.now(),
       notes: tempManualData.notes,
       audioBuffer: tempManualData.audioBuffer,
@@ -109,96 +160,52 @@ export default function ManualScreen({
       selectedCandidate: 0,
       source: "manual",
     });
-  }, [tempManualData, transposedChords, tapTimestamps, setSession]);
+  }, [tempManualData, chordMarkers, detectedOriginalKey, setSession]);
 
   const validChords = parsedChords.filter((c) => c.root !== "");
-  const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
+  const fmtMs = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}.${Math.floor((s % 1) * 10)}`;
+  const totalDur = tempManualData?.duration || 1;
 
-  /* ════════════════════════════════════════════════════
-     RENDER
-     ════════════════════════════════════════════════════ */
   return (
-    <div style={{
-      width: "100%", height: "calc(100vh - 48px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-      position: "relative", overflow: "hidden",
-    }}>
-      {/* Living gradient background — CLAUDE.md Layer 0 */}
-      <div style={{
-        position: "absolute", inset: 0, pointerEvents: "none",
-        background: "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.06) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 80% 100%, rgba(6,182,212,0.04) 0%, transparent 50%)",
-      }} />
+    <div style={{ width: "100%", height: "calc(100vh - 48px)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "radial-gradient(ellipse 80% 60% at 50% 0%, rgba(124,58,237,0.06) 0%, transparent 60%), radial-gradient(ellipse 60% 50% at 80% 100%, rgba(6,182,212,0.04) 0%, transparent 50%)" }} />
 
       <AnimatePresence mode="wait">
 
-        {/* ═══════════════ PHASE 1 — THE FOUNDATION ═══════════════ */}
+        {/* ═══ PHASE 1 — CHORD INPUT ═══ */}
         {phase === 1 && (
-          <motion.div key="p1"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-            exit={{ opacity: 0, filter: "blur(12px)" }}
-            transition={{ duration: 0.8, ease: ENTRANCE }}
-            style={{ width: "100%", maxWidth: 640, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, padding: "0 32px" }}
-          >
-            {/* Overline */}
-            <motion.div
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, ease: OSMO, delay: 0.1 }}
-              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", marginBottom: 48, textTransform: "uppercase" }}
-            >
+          <motion.div key="p1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, filter: "blur(12px)" }} transition={{ duration: 0.8, ease: ENTRANCE }}
+            style={{ width: "100%", maxWidth: 640, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, padding: "0 32px" }}>
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: OSMO, delay: 0.1 }}
+              style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", marginBottom: 48, textTransform: "uppercase" }}>
               Phase 01 — The Foundation
             </motion.div>
-
-            {/* Input */}
-            <motion.textarea
-              initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.8, ease: ENTRANCE, delay: 0.2 }}
-              className="manual-textarea"
-              placeholder="Am   G   F   C"
-              value={manualInput}
-              onChange={(e) => handleInput(e.target.value)}
-              style={{ textAlign: "center", fontSize: 18, minHeight: 96, marginBottom: 32, background: "transparent", borderColor: "rgba(255,255,255,0.06)" }}
-            />
-
-            {/* Parsed pills */}
+            <motion.textarea initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: ENTRANCE, delay: 0.2 }}
+              className="manual-textarea" placeholder="Am   G   F   C" value={manualInput} onChange={(e) => handleInput(e.target.value)}
+              style={{ textAlign: "center", fontSize: 18, minHeight: 96, marginBottom: 32, background: "transparent", borderColor: "rgba(255,255,255,0.06)" }} />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", minHeight: 40, marginBottom: 40 }}>
               <AnimatePresence>
                 {parsedChords.map((c, i) => (
-                  <motion.div key={`${c.display}-${i}`}
-                    initial={{ opacity: 0, scale: 0.8, y: 8 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.85 }}
-                    transition={{ duration: 0.35, ease: MICRO, delay: i * 0.04 }}
-                    className={`parsed-pill ${c.root ? "valid" : "invalid"}`}
-                  >
+                  <motion.div key={`${c.display}-${i}`} initial={{ opacity: 0, scale: 0.8, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.85 }}
+                    transition={{ duration: 0.35, ease: MICRO, delay: i * 0.04 }} className={`parsed-pill ${c.root ? "valid" : "invalid"}`}>
                     {c.display || "?"}
                   </motion.div>
                 ))}
               </AnimatePresence>
             </div>
-
-            {/* Detected key whisper */}
             <AnimatePresence>
               {detectedOriginalKey && (
-                <motion.div
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.5 }}
-                  style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)", letterSpacing: "0.2em", marginBottom: 32 }}
-                >
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}
+                  style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)", letterSpacing: "0.2em", marginBottom: 32 }}>
                   DETECTED KEY: <span style={{ color: "var(--white)" }}>{detectedOriginalKey.key} {detectedOriginalKey.mode}</span>
                 </motion.div>
               )}
             </AnimatePresence>
-
-            {/* Proceed CTA */}
             <AnimatePresence>
               {validChords.length > 0 && (
-                <motion.button
-                  initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
-                  transition={{ duration: 0.6, ease: ENTRANCE }}
-                  onClick={() => setPhase(2)}
-                  className="end-session-btn"
-                  style={{ padding: "14px 48px", letterSpacing: "0.25em", fontSize: 10, borderColor: "rgba(124,58,237,0.3)" }}
-                >
+                <motion.button initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.6, ease: ENTRANCE }}
+                  onClick={() => setPhase(2)} className="end-session-btn" style={{ padding: "14px 48px", letterSpacing: "0.25em", fontSize: 10, borderColor: "rgba(124,58,237,0.3)" }}>
                   PROCEED TO VOCALS →
                 </motion.button>
               )}
@@ -206,227 +213,248 @@ export default function ManualScreen({
           </motion.div>
         )}
 
-        {/* ═══════════════ PHASE 2 — THE PERFORMANCE ═══════════════ */}
+        {/* ═══ PHASE 2 — RECORDING ═══ */}
         {phase === 2 && (
-          <motion.div key="p2"
-            initial={{ opacity: 0, y: 24, filter: "blur(10px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, y: -16 }}
-            transition={{ duration: 0.9, ease: ENTRANCE }}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, maxWidth: 480, padding: "0 32px" }}
-          >
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", marginBottom: 64, textTransform: "uppercase" }}>
-              Phase 02 — The Performance
-            </div>
-
+          <motion.div key="p2" initial={{ opacity: 0, y: 24, filter: "blur(10px)" }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }} exit={{ opacity: 0, y: -16 }}
+            transition={{ duration: 0.9, ease: ENTRANCE }} style={{ display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, maxWidth: 480, padding: "0 32px" }}>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", marginBottom: 64, textTransform: "uppercase" }}>Phase 02 — The Performance</div>
             <div style={{ textAlign: "center", marginBottom: 64 }}>
-              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(2rem, 5vw, 3rem)", color: "var(--white)", lineHeight: 1.1, marginBottom: 16 }}>
-                Sing the melody.
-              </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--muted)", letterSpacing: "0.15em", lineHeight: 1.8 }}>
-                Take your time. VoxChord will follow you.
-              </div>
+              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(2rem, 5vw, 3rem)", color: "var(--white)", lineHeight: 1.1, marginBottom: 16 }}>Sing the melody.</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--muted)", letterSpacing: "0.15em", lineHeight: 1.8 }}>Take your time. VoxChord will follow you.</div>
             </div>
-
-            {/* Record button */}
-            <motion.div
-              onClick={handleRecordToggle}
-              whileTap={{ scale: 0.94 }}
-              style={{ position: "relative", cursor: "pointer" }}
-            >
+            <motion.div onClick={handleRecordToggle} whileTap={{ scale: 0.94 }} style={{ position: "relative", cursor: "pointer" }}>
               {recordingState === "recording" && (
-                <motion.div
-                  animate={{ opacity: [0.3, 0.7, 0.3], scale: [1, 1.15, 1] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  style={{ position: "absolute", inset: -16, borderRadius: "50%", background: "rgba(239,68,68,0.15)", filter: "blur(16px)" }}
-                />
+                <motion.div animate={{ opacity: [0.3, 0.7, 0.3], scale: [1, 1.15, 1] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  style={{ position: "absolute", inset: -16, borderRadius: "50%", background: "rgba(239,68,68,0.15)", filter: "blur(16px)" }} />
               )}
-              <div className={`record-btn ${recordingState === "recording" ? "recording" : recordingState === "analyzing" ? "analyzing" : ""}`}>
-                <div className="record-btn-inner" />
-              </div>
+              <div className={`record-btn ${recordingState === "recording" ? "recording" : recordingState === "analyzing" ? "analyzing" : ""}`}><div className="record-btn-inner" /></div>
             </motion.div>
-
-            {/* Status label */}
             <div style={{ marginTop: 16, height: 24, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <AnimatePresence mode="wait">
-                <motion.div key={recordingState}
-                  initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.3 }}
-                  className="record-label"
-                  style={{ color: recordingState === "recording" ? "var(--red)" : "var(--muted)" }}
-                >
+                <motion.div key={recordingState} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.3 }}
+                  className="record-label" style={{ color: recordingState === "recording" ? "var(--red)" : "var(--muted)" }}>
                   {recordingState === "idle" ? "TAP TO RECORD" : recordingState === "recording" ? fmt(recordingDuration) : "ANALYZING…"}
                 </motion.div>
               </AnimatePresence>
             </div>
-
-            <button onClick={() => setPhase(1)} className="end-session-btn" style={{ marginTop: 48, padding: "8px 24px", fontSize: 9 }}>
-              ← BACK TO CHORDS
-            </button>
+            <button onClick={() => setPhase(1)} className="end-session-btn" style={{ marginTop: 48, padding: "8px 24px", fontSize: 9 }}>← BACK TO CHORDS</button>
           </motion.div>
         )}
 
-        {/* ═══════════════ PHASE 3 — SYNCHRONIZATION ═══════════════ */}
+        {/* ═══ PHASE 3 — SYNCHRONIZATION (voice plays, click chords to mark) ═══ */}
         {phase === 3 && (
-          <motion.div key="p3"
-            initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -16 }}
-            transition={{ duration: 0.9, ease: ENTRANCE }}
-            style={{ width: "100%", maxWidth: 800, display: "flex", flexDirection: "column", zIndex: 1, padding: "0 32px", height: "100%", justifyContent: "center" }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 40 }}>
-              <div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 8 }}>
-                  Phase 03 — Synchronization
-                </div>
-                <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(1.5rem, 4vw, 2.2rem)", color: "var(--white)" }}>
-                  Drop the markers.
-                </div>
+          <motion.div key="p3" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} transition={{ duration: 0.9, ease: ENTRANCE }}
+            style={{ width: "100%", maxWidth: 900, display: "flex", flexDirection: "row", gap: 32, zIndex: 1, padding: "32px", height: "100%", alignItems: "stretch" }}>
+
+            {/* Left: Chord palette */}
+            <div style={{ width: 200, flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.3em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 8 }}>
+                TAP A CHORD
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--white)", letterSpacing: "0.15em" }}>
-                  {tapTimestamps.length} / {parsedChords.length}
-                </div>
-                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "rgba(6,182,212,0.8)", letterSpacing: "0.2em", marginTop: 4 }}>
-                  PRESS SPACEBAR
-                </div>
+              {parsedChords.filter(c => c.root).map((c, i) => (
+                <motion.button key={`${c.display}-${i}`} whileTap={{ scale: 0.93 }}
+                  onClick={() => dropChordMarker(c)}
+                  disabled={!isPlaying}
+                  style={{
+                    padding: "14px 16px", borderRadius: 10, cursor: isPlaying ? "pointer" : "not-allowed",
+                    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(124,58,237,0.25)",
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: isPlaying ? "var(--white)" : "var(--muted)",
+                    textAlign: "left", transition: "all 0.2s", opacity: isPlaying ? 1 : 0.4,
+                  }}>
+                  {c.display}
+                </motion.button>
+              ))}
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "var(--muted)", marginTop: 8, lineHeight: 1.8, letterSpacing: "0.1em" }}>
+                Play your voice, then click each chord when you hear it. Same chord can be clicked multiple times.
               </div>
             </div>
 
-            {/* Chord queue */}
-            <div style={{ display: "flex", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
-              {parsedChords.map((c, i) => {
-                const done = i < tapTimestamps.length;
-                const active = i === tapTimestamps.length;
+            {/* Right: playback + timeline */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 24 }}>
+                Phase 03 — Synchronization
+              </div>
+
+              {/* Play/pause + time */}
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
+                <motion.button whileTap={{ scale: 0.92 }} onClick={playVoice}
+                  className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
+                  style={{ width: 56, height: 56, fontSize: 18 }}>
+                  {isPlaying ? "⏸" : "▶"}
+                </motion.button>
+                <div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, color: "var(--white)" }}>{fmtMs(playTime)}</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>/ {fmt(Math.ceil(totalDur))}</div>
+                </div>
+                <div style={{ marginLeft: "auto", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "var(--cyan)" }}>
+                  {chordMarkers.length} marker{chordMarkers.length !== 1 ? "s" : ""}
+                </div>
+              </div>
+
+              {/* Progress bar with markers */}
+              <div style={{ position: "relative", width: "100%", height: 48, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
+                {/* Playhead */}
+                <div style={{ position: "absolute", top: 0, bottom: 0, width: 2, background: "var(--white)", left: `${(playTime / totalDur) * 100}%`, transition: "left 0.05s linear", zIndex: 2 }} />
+                {/* Markers */}
+                {chordMarkers.map((m, i) => (
+                  <div key={i} style={{ position: "absolute", top: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", left: `${(m.time / totalDur) * 100}%`, zIndex: 1 }}>
+                    <div style={{ width: 1, flex: 1, background: "rgba(124,58,237,0.6)" }} />
+                    <div style={{
+                      position: "absolute", top: 4,
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 7,
+                      color: "var(--cyan)", background: "rgba(5,5,8,0.85)",
+                      padding: "1px 4px", borderRadius: 3, whiteSpace: "nowrap",
+                    }}>{m.chord.display}</div>
+                  </div>
+                ))}
+                {/* Fill */}
+                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(playTime / totalDur) * 100}%`, background: "rgba(124,58,237,0.08)", transition: "width 0.05s linear" }} />
+              </div>
+
+              {/* Marker list */}
+              {chordMarkers.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
+                  {chordMarkers.map((m, i) => (
+                    <div key={i} style={{
+                      padding: "4px 10px", borderRadius: 6,
+                      background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.2)",
+                      fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--white)",
+                    }}>
+                      {m.chord.display} <span style={{ color: "var(--muted)" }}>@ {fmtMs(m.time)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button onClick={() => removeLastChordMarker()} className="end-session-btn" disabled={chordMarkers.length === 0}
+                    style={{ padding: "10px 20px", fontSize: 9, opacity: chordMarkers.length > 0 ? 1 : 0.3 }}>UNDO LAST</button>
+                  <button onClick={() => resetChordMarkers()} className="end-session-btn"
+                    style={{ padding: "10px 20px", fontSize: 9, borderColor: "rgba(239,68,68,0.25)", color: "rgba(239,68,68,0.7)" }}>RESET ALL</button>
+                  <button onClick={() => {
+                    try { sourceRef.current?.stop(); } catch {}
+                    cancelAnimationFrame(rafRef.current);
+                    setIsPlaying(false); setPlayTime(0); offsetRef.current = 0;
+                    setTempManualData(null); resetChordMarkers(); setPhase(2);
+                  }} className="end-session-btn" style={{ padding: "10px 20px", fontSize: 9 }}>RE-RECORD</button>
+                </div>
+                <button onClick={proceedToTransposition} disabled={chordMarkers.length === 0} className="btn-gradient"
+                  style={{ padding: "12px 40px", fontSize: 11, borderRadius: 2, opacity: chordMarkers.length > 0 ? 1 : 0.3, cursor: chordMarkers.length > 0 ? "pointer" : "not-allowed" }}>
+                  FINALIZE →
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ═══ PHASE 4 — FINE-TUNE + TRANSPOSITION ═══ */}
+        {phase === 4 && (
+          <motion.div key="p4" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} transition={{ duration: 0.9, ease: ENTRANCE }}
+            style={{ width: "100%", maxWidth: 900, display: "flex", flexDirection: "column", zIndex: 1, padding: "32px", height: "100%", justifyContent: "center" }}>
+
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "rgba(6,182,212,0.8)", marginBottom: 24, textTransform: "uppercase" }}>Phase 04 — Fine-tune &amp; Transpose</div>
+
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(1.3rem, 3vw, 2rem)", color: "var(--white)", marginBottom: 8 }}>Drag markers to fine-tune.</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)", letterSpacing: "0.15em" }}>
+                {detectedOriginalKey?.key} {detectedOriginalKey?.mode} → <span style={{ color: "var(--cyan)" }}>{tempManualData?.singingKey.key} {tempManualData?.singingKey.mode}</span>
+              </div>
+            </div>
+
+            {/* Play voice + draggable timeline */}
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+              <motion.button whileTap={{ scale: 0.92 }} onClick={playVoice}
+                className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
+                style={{ width: 48, height: 48, fontSize: 16, flexShrink: 0 }}>
+                {isPlaying ? "⏸" : "▶"}
+              </motion.button>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: "var(--white)" }}>{fmtMs(playTime)}</div>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>/ {fmt(Math.ceil(totalDur))}</div>
+            </div>
+
+            {/* Draggable timeline bar */}
+            <div
+              style={{ position: "relative", width: "100%", height: 64, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, marginBottom: 24, cursor: "crosshair" }}
+              onClick={(e) => {
+                // Clicking the bar seeks the voice playback
+                const rect = e.currentTarget.getBoundingClientRect();
+                const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                const t = pct * totalDur;
+                setPlayTime(t);
+                offsetRef.current = t;
+                if (isPlaying) {
+                  try { sourceRef.current?.stop(); } catch {}
+                  cancelAnimationFrame(rafRef.current);
+                  setIsPlaying(false);
+                  setTimeout(() => playVoice(), 50);
+                }
+              }}
+            >
+              {/* Playhead */}
+              <div style={{ position: "absolute", top: 0, bottom: 0, width: 2, background: "var(--white)", left: `${(playTime / totalDur) * 100}%`, transition: "left 0.05s linear", zIndex: 3 }} />
+              {/* Fill */}
+              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(playTime / totalDur) * 100}%`, background: "rgba(124,58,237,0.06)", borderRadius: "12px 0 0 12px" }} />
+
+              {/* Draggable markers */}
+              {chordMarkers.map((m, i) => {
+                const offset = detectedOriginalKey && tempManualData ? Transposer.computeOffset(detectedOriginalKey.key, tempManualData.singingKey.key) : 0;
+                const transposed = ChordParser.transposeChord(m.chord, offset);
                 return (
-                  <motion.div key={i}
-                    animate={{ scale: active ? 1.12 : 1, opacity: done ? 0.3 : active ? 1 : 0.5 }}
-                    transition={{ duration: 0.4, ease: ENTRANCE }}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}
+                  <div key={i}
+                    style={{ position: "absolute", top: 0, bottom: 0, left: `${(m.time / totalDur) * 100}%`, zIndex: 2, cursor: "ew-resize", touchAction: "none" }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      const bar = e.currentTarget.parentElement!;
+                      const rect = bar.getBoundingClientRect();
+                      const onMove = (ev: MouseEvent) => {
+                        const pct = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                        updateChordMarkerTime(i, pct * totalDur);
+                      };
+                      const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                      window.addEventListener("mousemove", onMove);
+                      window.addEventListener("mouseup", onUp);
+                    }}
                   >
-                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: active ? "var(--cyan)" : "var(--white)" }}>
-                      {c.display}
-                    </span>
-                    {done && <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--cyan)" }} />}
-                    {active && <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--white)", animation: "statusPulse 1.5s infinite" }} />}
+                    {/* Marker line */}
+                    <div style={{ position: "absolute", left: -1, top: 0, bottom: 0, width: 2, background: "rgba(124,58,237,0.7)" }} />
+                    {/* Handle */}
+                    <div style={{ position: "absolute", left: -6, top: "50%", transform: "translateY(-50%)", width: 12, height: 20, borderRadius: 4, background: "rgba(124,58,237,0.9)", border: "1px solid rgba(255,255,255,0.2)" }} />
+                    {/* Label */}
+                    <div style={{ position: "absolute", bottom: -20, left: -16, whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "var(--cyan)" }}>
+                      {transposed.display} {fmtMs(m.time)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Transposed chord list (compact) */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 32 }}>
+              {chordMarkers.map((m, i) => {
+                const offset = detectedOriginalKey && tempManualData ? Transposer.computeOffset(detectedOriginalKey.key, tempManualData.singingKey.key) : 0;
+                const transposed = ChordParser.transposeChord(m.chord, offset);
+                return (
+                  <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: OSMO, delay: i * 0.03 }}
+                    style={{ padding: "6px 12px", borderRadius: 8, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+                    <span style={{ color: "var(--muted)" }}>{m.chord.display}</span>
+                    <span style={{ color: "rgba(255,255,255,0.12)", margin: "0 6px" }}>→</span>
+                    <span style={{ color: "var(--white)" }}>{transposed.display}</span>
+                    <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 9 }}>@ {fmtMs(m.time)}</span>
                   </motion.div>
                 );
               })}
             </div>
 
-            {/* Waveform placeholder — rendered via WaveSurfer when available */}
-            <div style={{
-              width: "100%", height: 120, background: "rgba(255,255,255,0.02)",
-              border: "1px solid rgba(255,255,255,0.05)", borderRadius: 16,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              marginBottom: 32, position: "relative", overflow: "hidden",
-            }}>
-              {/* Simple amplitude bars as visual feedback */}
-              <div style={{ display: "flex", gap: 3, alignItems: "center", height: "60%" }}>
-                {Array.from({ length: 40 }).map((_, i) => (
-                  <div key={i} style={{
-                    width: 2, borderRadius: 1,
-                    height: `${20 + Math.sin(i * 0.4) * 60 + Math.random() * 20}%`,
-                    background: i < (tapTimestamps.length / parsedChords.length) * 40
-                      ? "rgba(6,182,212,0.6)" : "rgba(255,255,255,0.12)",
-                    transition: "background 0.3s",
-                  }} />
-                ))}
-              </div>
-              {/* Marker lines */}
-              {tapTimestamps.map((t, i) => (
-                <div key={i} style={{
-                  position: "absolute", top: 0, bottom: 0, width: 1,
-                  background: "rgba(6,182,212,0.6)",
-                  left: `${(t / (tempManualData?.duration || 1)) * 100}%`,
-                }}>
-                  <div style={{
-                    position: "absolute", top: 8, left: 4,
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 8,
-                    color: "var(--cyan)", background: "rgba(5,5,8,0.8)",
-                    padding: "2px 6px", borderRadius: 4, whiteSpace: "nowrap",
-                  }}>
-                    {parsedChords[i]?.display}
-                  </div>
-                </div>
-              ))}
-            </div>
-
             {/* Actions */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ display: "flex", gap: 12 }}>
-                <button onClick={() => resetTapTimestamps()} className="end-session-btn" style={{ padding: "10px 24px", fontSize: 9, borderColor: "rgba(239,68,68,0.25)", color: "rgba(239,68,68,0.7)" }}>
-                  RESET MARKERS
-                </button>
-                <button onClick={() => { setTempManualData(null); resetTapTimestamps(); setPhase(2); }} className="end-session-btn" style={{ padding: "10px 24px", fontSize: 9 }}>
-                  RE-RECORD
-                </button>
-              </div>
-              <button
-                onClick={proceedToTransposition}
-                disabled={tapTimestamps.length < parsedChords.length}
-                className="btn-gradient"
-                style={{
-                  padding: "12px 40px", fontSize: 11, borderRadius: 2,
-                  opacity: tapTimestamps.length >= parsedChords.length ? 1 : 0.3,
-                  cursor: tapTimestamps.length >= parsedChords.length ? "pointer" : "not-allowed",
-                }}
-              >
-                FINALIZE TIMING →
-              </button>
+              <button onClick={() => setPhase(3)} className="end-session-btn" style={{ padding: "10px 24px", fontSize: 9 }}>← BACK TO MARKERS</button>
+              <motion.button whileTap={{ scale: 0.97 }} onClick={handleUseChords} className="btn-gradient"
+                style={{ padding: "14px 48px", fontSize: 12, borderRadius: 2, letterSpacing: "0.15em" }}>
+                PROCEED TO PLAYBACK
+              </motion.button>
             </div>
-          </motion.div>
-        )}
-
-        {/* ═══════════════ PHASE 4 — TRANSPOSITION ═══════════════ */}
-        {phase === 4 && (
-          <motion.div key="p4"
-            initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -16 }}
-            transition={{ duration: 0.9, ease: ENTRANCE }}
-            style={{ width: "100%", maxWidth: 560, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 1, padding: "0 32px" }}
-          >
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "rgba(6,182,212,0.8)", marginBottom: 48, textTransform: "uppercase" }}>
-              Phase 04 — Transposition
-            </div>
-
-            <div style={{ textAlign: "center", marginBottom: 48 }}>
-              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(1.5rem, 4vw, 2.5rem)", color: "var(--white)", marginBottom: 16 }}>
-                Aligned to your voice.
-              </div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--muted)", letterSpacing: "0.15em", lineHeight: 2 }}>
-                {detectedOriginalKey?.key} {detectedOriginalKey?.mode} → <span style={{ color: "var(--cyan)" }}>{tempManualData?.singingKey.key} {tempManualData?.singingKey.mode}</span>
-              </div>
-            </div>
-
-            {/* Transposition table */}
-            <div style={{ width: "100%", marginBottom: 48 }}>
-              {parsedChords.map((orig, i) => (
-                <motion.div key={i}
-                  initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.5, ease: OSMO, delay: i * 0.06 }}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    padding: "14px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 16,
-                  }}
-                >
-                  <span style={{ color: "var(--muted)" }}>{orig.display}</span>
-                  <span style={{ color: "rgba(255,255,255,0.15)" }}>→</span>
-                  <span style={{ color: "var(--white)", fontWeight: 500 }}>{transposedChords[i]?.display}</span>
-                </motion.div>
-              ))}
-            </div>
-
-            <motion.button
-              initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, ease: ENTRANCE, delay: parsedChords.length * 0.06 + 0.2 }}
-              onClick={handleUseChords}
-              className="btn-gradient"
-              style={{ width: "100%", padding: 18, borderRadius: 2, fontSize: 13, letterSpacing: "0.15em" }}
-            >
-              PROCEED TO PLAYBACK
-            </motion.button>
           </motion.div>
         )}
 

@@ -28,6 +28,11 @@ export interface Phrase {
   source?: 'algorithm' | 'manual';
 }
 
+export interface ChordMarker {
+  chord: ParsedChord;
+  time: number;  // seconds into the recording
+}
+
 interface PhraseState {
   currentSession: Phrase | null;
   recordingState: 'idle' | 'recording' | 'analyzing';
@@ -39,6 +44,7 @@ interface PhraseState {
   originalKeyOverride: { key: string; mode: 'major' | 'minor' } | null;
   transposedChords: ParsedChord[];
   tapTimestamps: number[];
+  chordMarkers: ChordMarker[];   // free-form: same chord can appear many times
   timingMode: 'auto' | 'tap';
   tempManualData: { 
     notes: TimestampedNote[], 
@@ -61,6 +67,10 @@ interface PhraseState {
   setTransposedChords: (chords: ParsedChord[]) => void;
   addTapTimestamp: (time: number) => void;
   resetTapTimestamps: () => void;
+  addChordMarker: (marker: ChordMarker) => void;
+  removeLastChordMarker: () => void;
+  resetChordMarkers: () => void;
+  updateChordMarkerTime: (index: number, newTime: number) => void;
   setTimingMode: (mode: 'auto' | 'tap') => void;
   setTempManualData: (data: any) => void;
 }
@@ -75,6 +85,7 @@ export const usePhraseStore = create<PhraseState>((set) => ({
   originalKeyOverride: null,
   transposedChords: [],
   tapTimestamps: [],
+  chordMarkers: [],
   timingMode: 'auto',
   tempManualData: null,
 
@@ -97,6 +108,7 @@ export const usePhraseStore = create<PhraseState>((set) => ({
     originalKeyOverride: null,
     transposedChords: [],
     tapTimestamps: [],
+    chordMarkers: [],
     timingMode: 'auto',
     tempManualData: null,
   }),
@@ -104,6 +116,7 @@ export const usePhraseStore = create<PhraseState>((set) => ({
   clearRecordingData: () => set({
     currentSession: null,
     tapTimestamps: [],
+    chordMarkers: [],
     tempManualData: null,
   }),
 
@@ -114,6 +127,17 @@ export const usePhraseStore = create<PhraseState>((set) => ({
   setTransposedChords: (chords) => set({ transposedChords: chords }),
   addTapTimestamp: (time) => set((state) => ({ tapTimestamps: [...state.tapTimestamps, time] })),
   resetTapTimestamps: () => set({ tapTimestamps: [] }),
+  addChordMarker: (marker) => set((state) => ({ chordMarkers: [...state.chordMarkers, marker].sort((a, b) => a.time - b.time) })),
+  removeLastChordMarker: () => set((state) => ({ chordMarkers: state.chordMarkers.slice(0, -1) })),
+  resetChordMarkers: () => set({ chordMarkers: [] }),
+  updateChordMarkerTime: (index, newTime) => set((state) => {
+    const updated = [...state.chordMarkers];
+    if (index >= 0 && index < updated.length) {
+      updated[index] = { ...updated[index], time: Math.max(0, newTime) };
+      updated.sort((a, b) => a.time - b.time);
+    }
+    return { chordMarkers: updated };
+  }),
   setTimingMode: (mode) => set({ timingMode: mode }),
   setTempManualData: (data) => set({ tempManualData: data }),
 }));
