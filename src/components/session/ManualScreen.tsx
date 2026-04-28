@@ -241,86 +241,76 @@ export default function ManualScreen({
           </motion.div>
         )}
 
-        {/* ═══ PHASE 3 — SYNCHRONIZATION (voice plays, click chords to mark) ═══ */}
+        {/* ═══ PHASE 3 — SYNCHRONIZATION ═══ */}
         {phase === 3 && (
           <motion.div key="p3" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} transition={{ duration: 0.9, ease: ENTRANCE }}
-            style={{ width: "100%", maxWidth: 900, display: "flex", flexDirection: "row", gap: 32, zIndex: 1, padding: "32px", height: "100%", alignItems: "stretch" }}>
+            style={{ width: "100%", maxWidth: 960, display: "flex", flexDirection: "row", zIndex: 1, height: "100%", alignItems: "stretch", position: "relative" }}>
+
+            {/* Living atmosphere */}
+            <div className="sync-atmosphere" />
 
             {/* Left: Chord palette */}
-            <div style={{ width: 200, flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.3em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 8 }}>
-                TAP A CHORD
-              </div>
+            <div className="chord-palette">
+              <div className="phase-overline" style={{ marginBottom: 16 }}>Tap a chord</div>
               {parsedChords.filter(c => c.root).map((c, i) => (
                 <motion.button key={`${c.display}-${i}`} whileTap={{ scale: 0.93 }}
                   onClick={() => dropChordMarker(c)}
                   disabled={!isPlaying}
-                  style={{
-                    padding: "14px 16px", borderRadius: 10, cursor: isPlaying ? "pointer" : "not-allowed",
-                    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(124,58,237,0.25)",
-                    fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: isPlaying ? "var(--white)" : "var(--muted)",
-                    textAlign: "left", transition: "all 0.2s", opacity: isPlaying ? 1 : 0.4,
-                  }}>
+                  className={`chord-palette-btn ${chordMarkers.length > 0 && chordMarkers[chordMarkers.length - 1].chord.display === c.display ? 'active-chord' : ''}`}>
                   {c.display}
                 </motion.button>
               ))}
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "var(--muted)", marginTop: 8, lineHeight: 1.8, letterSpacing: "0.1em" }}>
+              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "var(--muted)", marginTop: "auto", lineHeight: 1.8, letterSpacing: "0.08em", paddingTop: 16 }}>
                 Play your voice, then click each chord when you hear it. Same chord can be clicked multiple times.
               </div>
             </div>
 
             {/* Right: playback + timeline */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "var(--muted)", textTransform: "uppercase", marginBottom: 24 }}>
-                Phase 03 — Synchronization
-              </div>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "32px 40px" }}>
+              <div className="phase-overline" style={{ marginBottom: 32 }}>Phase 03 — Synchronization</div>
 
               {/* Play/pause + time */}
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 32 }}>
                 <motion.button whileTap={{ scale: 0.92 }} onClick={playVoice}
-                  className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
-                  style={{ width: 56, height: 56, fontSize: 18 }}>
+                  className={`sync-play-btn ${isPlaying ? "is-playing" : ""}`}>
                   {isPlaying ? "⏸" : "▶"}
                 </motion.button>
                 <div>
-                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, color: "var(--white)" }}>{fmtMs(playTime)}</div>
-                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>/ {fmt(Math.ceil(totalDur))}</div>
+                  <div className="sync-time-display">{fmtMs(playTime)}</div>
+                  <div className="sync-time-total">/ {fmt(Math.ceil(totalDur))}</div>
                 </div>
-                <div style={{ marginLeft: "auto", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "var(--cyan)" }}>
-                  {chordMarkers.length} marker{chordMarkers.length !== 1 ? "s" : ""}
+                <div style={{ marginLeft: "auto" }}>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "var(--cyan)", fontVariantNumeric: "tabular-nums" }}>
+                    {chordMarkers.length}
+                  </span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: "var(--muted)", marginLeft: 6, letterSpacing: "0.15em" }}>
+                    MARKER{chordMarkers.length !== 1 ? "S" : ""}
+                  </span>
                 </div>
               </div>
 
-              {/* Progress bar with markers */}
-              <div style={{ position: "relative", width: "100%", height: 48, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
+              {/* Timeline track */}
+              <div className="sync-timeline-track" style={{ marginBottom: 32 }}>
+                {/* Progress fill */}
+                <div className="sync-progress-fill" style={{ width: `${(playTime / totalDur) * 100}%` }} />
                 {/* Playhead */}
-                <div style={{ position: "absolute", top: 0, bottom: 0, width: 2, background: "var(--white)", left: `${(playTime / totalDur) * 100}%`, transition: "left 0.05s linear", zIndex: 2 }} />
+                <div className="sync-playhead" style={{ left: `${(playTime / totalDur) * 100}%` }} />
                 {/* Markers */}
                 {chordMarkers.map((m, i) => (
-                  <div key={i} style={{ position: "absolute", top: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", left: `${(m.time / totalDur) * 100}%`, zIndex: 1 }}>
-                    <div style={{ width: 1, flex: 1, background: "rgba(124,58,237,0.6)" }} />
-                    <div style={{
-                      position: "absolute", top: 4,
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 7,
-                      color: "var(--cyan)", background: "rgba(5,5,8,0.85)",
-                      padding: "1px 4px", borderRadius: 3, whiteSpace: "nowrap",
-                    }}>{m.chord.display}</div>
+                  <div key={i} className="sync-marker" style={{ left: `${(m.time / totalDur) * 100}%` }}>
+                    <div className="sync-marker-line" />
+                    <div className="sync-marker-label">{m.chord.display}</div>
                   </div>
                 ))}
-                {/* Fill */}
-                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(playTime / totalDur) * 100}%`, background: "rgba(124,58,237,0.08)", transition: "width 0.05s linear" }} />
               </div>
 
-              {/* Marker list */}
+              {/* Marker chips */}
               {chordMarkers.length > 0 && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 32 }}>
                   {chordMarkers.map((m, i) => (
-                    <div key={i} style={{
-                      padding: "4px 10px", borderRadius: 6,
-                      background: "rgba(124,58,237,0.1)", border: "1px solid rgba(124,58,237,0.2)",
-                      fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--white)",
-                    }}>
-                      {m.chord.display} <span style={{ color: "var(--muted)" }}>@ {fmtMs(m.time)}</span>
+                    <div key={i} className="marker-chip">
+                      {m.chord.display}
+                      <span className="marker-chip-time">@ {fmtMs(m.time)}</span>
                     </div>
                   ))}
                 </div>
@@ -352,33 +342,35 @@ export default function ManualScreen({
         {/* ═══ PHASE 4 — FINE-TUNE + TRANSPOSITION ═══ */}
         {phase === 4 && (
           <motion.div key="p4" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} transition={{ duration: 0.9, ease: ENTRANCE }}
-            style={{ width: "100%", maxWidth: 900, display: "flex", flexDirection: "column", zIndex: 1, padding: "32px", height: "100%", justifyContent: "center" }}>
+            style={{ width: "100%", maxWidth: 900, display: "flex", flexDirection: "column", zIndex: 1, padding: "32px 40px", height: "100%", justifyContent: "center", position: "relative" }}>
 
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: "0.4em", color: "rgba(6,182,212,0.8)", marginBottom: 24, textTransform: "uppercase" }}>Phase 04 — Fine-tune &amp; Transpose</div>
+            {/* Living atmosphere */}
+            <div className="sync-atmosphere" />
+
+            <div className="phase-overline accent" style={{ marginBottom: 24 }}>Phase 04 — Fine-tune &amp; Transpose</div>
 
             <div style={{ marginBottom: 32 }}>
-              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(1.3rem, 3vw, 2rem)", color: "var(--white)", marginBottom: 8 }}>Drag markers to fine-tune.</div>
+              <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 100, fontSize: "clamp(1.3rem, 3vw, 2rem)", color: "var(--white)", marginBottom: 8, letterSpacing: "-0.02em" }}>Drag markers to fine-tune.</div>
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)", letterSpacing: "0.15em" }}>
                 {detectedOriginalKey?.key} {detectedOriginalKey?.mode} → <span style={{ color: "var(--cyan)" }}>{tempManualData?.singingKey.key} {tempManualData?.singingKey.mode}</span>
               </div>
             </div>
 
-            {/* Play voice + draggable timeline */}
-            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+            {/* Play voice */}
+            <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 24 }}>
               <motion.button whileTap={{ scale: 0.92 }} onClick={playVoice}
-                className={`ctrl-btn play-btn ${isPlaying ? "playing" : ""}`}
-                style={{ width: 48, height: 48, fontSize: 16, flexShrink: 0 }}>
+                className={`sync-play-btn ${isPlaying ? "is-playing" : ""}`}
+                style={{ width: 48, height: 48, fontSize: 16 }}>
                 {isPlaying ? "⏸" : "▶"}
               </motion.button>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, color: "var(--white)" }}>{fmtMs(playTime)}</div>
-              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: "var(--muted)" }}>/ {fmt(Math.ceil(totalDur))}</div>
+              <div className="sync-time-display" style={{ fontSize: 18 }}>{fmtMs(playTime)}</div>
+              <div className="sync-time-total">/ {fmt(Math.ceil(totalDur))}</div>
             </div>
 
-            {/* Draggable timeline bar */}
-            <div
-              style={{ position: "relative", width: "100%", height: 64, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, marginBottom: 24, cursor: "crosshair" }}
+            {/* Draggable timeline */}
+            <div className="sync-timeline-track"
+              style={{ marginBottom: 40 }}
               onClick={(e) => {
-                // Clicking the bar seeks the voice playback
                 const rect = e.currentTarget.getBoundingClientRect();
                 const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
                 const t = pct * totalDur;
@@ -392,10 +384,8 @@ export default function ManualScreen({
                 }
               }}
             >
-              {/* Playhead */}
-              <div style={{ position: "absolute", top: 0, bottom: 0, width: 2, background: "var(--white)", left: `${(playTime / totalDur) * 100}%`, transition: "left 0.05s linear", zIndex: 3 }} />
-              {/* Fill */}
-              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${(playTime / totalDur) * 100}%`, background: "rgba(124,58,237,0.06)", borderRadius: "12px 0 0 12px" }} />
+              <div className="sync-progress-fill" style={{ width: `${(playTime / totalDur) * 100}%` }} />
+              <div className="sync-playhead" style={{ left: `${(playTime / totalDur) * 100}%` }} />
 
               {/* Draggable markers */}
               {chordMarkers.map((m, i) => {
@@ -403,7 +393,8 @@ export default function ManualScreen({
                 const transposed = ChordParser.transposeChord(m.chord, offset);
                 return (
                   <div key={i}
-                    style={{ position: "absolute", top: 0, bottom: 0, left: `${(m.time / totalDur) * 100}%`, zIndex: 2, cursor: "ew-resize", touchAction: "none" }}
+                    className="sync-marker draggable"
+                    style={{ left: `${(m.time / totalDur) * 100}%` }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       const bar = e.currentTarget.parentElement!;
@@ -417,31 +408,26 @@ export default function ManualScreen({
                       window.addEventListener("mouseup", onUp);
                     }}
                   >
-                    {/* Marker line */}
-                    <div style={{ position: "absolute", left: -1, top: 0, bottom: 0, width: 2, background: "rgba(124,58,237,0.7)" }} />
-                    {/* Handle */}
-                    <div style={{ position: "absolute", left: -6, top: "50%", transform: "translateY(-50%)", width: 12, height: 20, borderRadius: 4, background: "rgba(124,58,237,0.9)", border: "1px solid rgba(255,255,255,0.2)" }} />
-                    {/* Label */}
-                    <div style={{ position: "absolute", bottom: -20, left: -16, whiteSpace: "nowrap", fontFamily: "'JetBrains Mono', monospace", fontSize: 8, color: "var(--cyan)" }}>
-                      {transposed.display} {fmtMs(m.time)}
-                    </div>
+                    <div className="sync-marker-line" />
+                    <div className="sync-marker-handle" />
+                    <div className="sync-marker-drag-label">{transposed.display} {fmtMs(m.time)}</div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Transposed chord list (compact) */}
+            {/* Transposed chord chips */}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 32 }}>
               {chordMarkers.map((m, i) => {
                 const offset = detectedOriginalKey && tempManualData ? Transposer.computeOffset(detectedOriginalKey.key, tempManualData.singingKey.key) : 0;
                 const transposed = ChordParser.transposeChord(m.chord, offset);
                 return (
                   <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, ease: OSMO, delay: i * 0.03 }}
-                    style={{ padding: "6px 12px", borderRadius: 8, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+                    className="marker-chip">
                     <span style={{ color: "var(--muted)" }}>{m.chord.display}</span>
-                    <span style={{ color: "rgba(255,255,255,0.12)", margin: "0 6px" }}>→</span>
+                    <span style={{ color: "rgba(255,255,255,0.12)" }}>→</span>
                     <span style={{ color: "var(--white)" }}>{transposed.display}</span>
-                    <span style={{ color: "var(--muted)", marginLeft: 8, fontSize: 9 }}>@ {fmtMs(m.time)}</span>
+                    <span className="marker-chip-time">@ {fmtMs(m.time)}</span>
                   </motion.div>
                 );
               })}
