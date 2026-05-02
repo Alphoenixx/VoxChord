@@ -16,12 +16,11 @@ export class AudioEngine {
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false,
-          sampleRate: 44100
+          autoGainControl: false
         }
       });
 
-      this.ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 44100 });
+      this.ctx = new AudioContext({ latencyHint: 'interactive' });
       useAudioStore.getState().setAudioContext(this.ctx);
       
       // Load the worklet
