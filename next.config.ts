@@ -20,6 +20,7 @@ const pwaConfig = withPWA({
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  turbopack: {},
 };
 
 export default pwaConfig(nextConfig);
