@@ -397,7 +397,7 @@ export default function ManualScreen({
 
             {/* Play voice */}
             <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 24 }}>
-              <motion.button whileTap={{ scale: 0.92 }} onClick={playVoice}
+              <motion.button whileTap={{ scale: 0.92 }} onClick={() => playVoice()}
                 className={`sync-play-btn ${isPlaying ? "is-playing" : ""}`}
                 style={{ width: 48, height: 48, fontSize: 16 }}>
                 {isPlaying ? "⏸" : "▶"}
