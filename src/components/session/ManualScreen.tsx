@@ -92,16 +92,8 @@ export default function ManualScreen({
     const src = audioContext.createBufferSource();
     src.buffer = tempManualData.audioBuffer;
     
-    // Master Limiter to prevent distortion/clipping
-    const limiter = audioContext.createDynamicsCompressor();
-    limiter.threshold.value = -1.0; 
-    limiter.knee.value = 40;
-    limiter.ratio.value = 12;
-    limiter.attack.value = 0;
-    limiter.release.value = 0.25;
-    limiter.connect(audioContext.destination);
-
-    src.connect(limiter);
+    // Connect directly to output (removed compressor to rule out crackling)
+    src.connect(audioContext.destination);
     
     src.onended = () => {
       // Only reset if it naturally ended (not manually stopped/seeked)

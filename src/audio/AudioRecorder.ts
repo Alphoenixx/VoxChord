@@ -30,6 +30,7 @@ export class AudioRecorder {
 
     this.recorder = new MediaRecorder(stream, {
       ...(mimeType ? { mimeType } : {}),
+      audioBitsPerSecond: 128000 // Force high bitrate to prevent compression distortion
     });
 
     this.recorder.ondataavailable = (e) => {
