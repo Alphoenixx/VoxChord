@@ -1,4 +1,4 @@
-import { AudioLatencyInfo, AudioEvent } from '../stores/useAudioStore';
+import { AudioLatencyInfo, AudioEvent, useAudioStore } from '../stores/useAudioStore';
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -22,6 +22,7 @@ export class AudioEngine {
       });
 
       this.ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 44100 });
+      useAudioStore.getState().setAudioContext(this.ctx);
       
       // Load the worklet
       await this.ctx.audioWorklet.addModule('/worklets/pitch-worklet.js');
@@ -55,6 +56,7 @@ export class AudioEngine {
     if (this.ctx) {
       await this.ctx.close();
       this.ctx = null;
+      useAudioStore.getState().setAudioContext(null);
     }
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());

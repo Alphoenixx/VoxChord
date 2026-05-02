@@ -40,11 +40,13 @@ interface AudioState {
   stable: boolean; // Always true if voiced now, kept for UI compatibility
   
   latency: AudioLatencyInfo;
+  audioContext: AudioContext | null;
   
   // Actions
   setIsActive: (isActive: boolean) => void;
   handleAudioEvent: (event: AudioEvent) => void;
   setLatency: (latency: AudioLatencyInfo) => void;
+  setAudioContext: (ctx: AudioContext | null) => void;
 }
 
 export const useAudioStore = create<AudioState>((set) => ({
@@ -59,8 +61,10 @@ export const useAudioStore = create<AudioState>((set) => ({
   confidence: 0,
   stable: false,
   latency: { base: 0, output: 0, total: 0 },
+  audioContext: null,
 
   setIsActive: (isActive) => set({ isActive }),
+  setAudioContext: (ctx) => set({ audioContext: ctx }),
   handleAudioEvent: (event) => set((state) => {
     if (event.type === 'SilenceEvent') {
       if (!state.voiced) return state; // already silent
@@ -97,3 +101,16 @@ export const useAudioStore = create<AudioState>((set) => ({
   }),
   setLatency: (latency) => set({ latency }),
 }));
+
+if (typeof window !== 'undefined') {
+  const resumeCtx = async () => {
+    const ctx = useAudioStore.getState().audioContext
+    if (ctx?.state === 'suspended') await ctx.resume()
+  }
+
+  document.addEventListener('touchstart',        resumeCtx, { passive: true })
+  document.addEventListener('touchend',          resumeCtx, { passive: true })
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') resumeCtx()
+  })
+}
