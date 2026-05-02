@@ -38,8 +38,10 @@ export class AudioRecorder {
       }
     };
 
-    // Request data every 250ms so we don't lose anything on sudden stop
-    this.recorder.start(250);
+    // Do not use a timeslice (e.g. 250ms). On some devices, chunking the MediaRecorder 
+    // stream introduces micro-stutters and cuts in the final decoded AudioBuffer.
+    // Recording in one continuous chunk is much smoother.
+    this.recorder.start();
   }
 
   /** Stop recording and return a decoded AudioBuffer. */

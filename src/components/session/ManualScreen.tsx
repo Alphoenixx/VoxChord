@@ -75,19 +75,24 @@ export default function ManualScreen({
   }, [recordingState, onStartRecording, onStopRecording]);
 
   /* ── Phase 3: Play/pause recorded voice ── */
-  const playVoice = useCallback(() => {
+  const playVoice = useCallback((startOffset?: number) => {
     if (!audioContext || !tempManualData?.audioBuffer) return;
-    if (isPlaying) {
-      try { sourceRef.current?.stop(); } catch {}
-      cancelAnimationFrame(rafRef.current);
+    
+    // Always clean up existing playback first
+    try { sourceRef.current?.stop(); sourceRef.current?.disconnect(); } catch {}
+    cancelAnimationFrame(rafRef.current);
+
+    // If we are currently playing and no specific startOffset was provided, this is a pause action
+    if (isPlaying && startOffset === undefined) {
       offsetRef.current = playTime;
       setIsPlaying(false);
       return;
     }
+
     const src = audioContext.createBufferSource();
     src.buffer = tempManualData.audioBuffer;
     
-    // Master Limiter to prevent distortion/clipping if played rapidly
+    // Master Limiter to prevent distortion/clipping
     const limiter = audioContext.createDynamicsCompressor();
     limiter.threshold.value = -1.0; 
     limiter.knee.value = 40;
@@ -99,16 +104,23 @@ export default function ManualScreen({
     src.connect(limiter);
     
     src.onended = () => {
-      cancelAnimationFrame(rafRef.current);
-      setIsPlaying(false);
-      setPlayTime(0);
-      offsetRef.current = 0;
+      // Only reset if it naturally ended (not manually stopped/seeked)
+      if (sourceRef.current === src) {
+        cancelAnimationFrame(rafRef.current);
+        setIsPlaying(false);
+        setPlayTime(0);
+        offsetRef.current = 0;
+      }
     };
-    const off = offsetRef.current;
+    
+    const off = startOffset !== undefined ? startOffset : offsetRef.current;
+    offsetRef.current = off;
+    
     src.start(0, off);
     startTimeRef.current = audioContext.currentTime - off;
     sourceRef.current = src;
     setIsPlaying(true);
+    
     const tick = () => {
       const t = audioContext.currentTime - startTimeRef.current;
       setPlayTime(Math.min(t, tempManualData.duration));
@@ -116,6 +128,14 @@ export default function ManualScreen({
     };
     rafRef.current = requestAnimationFrame(tick);
   }, [audioContext, tempManualData, isPlaying, playTime]);
+
+  const handleSeek = useCallback((t: number) => {
+    setPlayTime(t);
+    offsetRef.current = t;
+    if (isPlaying) {
+      playVoice(t);
+    }
+  }, [isPlaying, playVoice]);
 
   /* ── Phase 3: Click a chord to drop marker at current playback time ── */
   const dropChordMarker = useCallback((chord: ParsedChord) => {
@@ -285,7 +305,7 @@ export default function ManualScreen({
 
               {/* Play/pause + time */}
               <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 32 }}>
-                <motion.button whileTap={{ scale: 0.92 }} onClick={playVoice}
+                <motion.button whileTap={{ scale: 0.92 }} onClick={() => playVoice()}
                   className={`sync-play-btn ${isPlaying ? "is-playing" : ""}`}>
                   {isPlaying ? "⏸" : "▶"}
                 </motion.button>
@@ -303,12 +323,17 @@ export default function ManualScreen({
                 </div>
               </div>
 
-              {/* Timeline track */}
-              <div className="sync-timeline-track" style={{ marginBottom: 32 }}>
+              <div className="sync-timeline-track" style={{ marginBottom: 32 }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                  handleSeek(pct * totalDur);
+                }}
+              >
                 {/* Progress fill */}
-                <div className="sync-progress-fill" style={{ width: `${(playTime / totalDur) * 100}%` }} />
+                <div className="sync-progress-fill" style={{ width: `${(playTime / totalDur) * 100}%`, transition: isPlaying ? 'none' : 'width 0.1s' }} />
                 {/* Playhead */}
-                <div className="sync-playhead" style={{ left: `${(playTime / totalDur) * 100}%` }} />
+                <div className="sync-playhead" style={{ left: `${(playTime / totalDur) * 100}%`, transition: isPlaying ? 'none' : 'left 0.1s' }} />
                 {/* Markers */}
                 {chordMarkers.map((m, i) => (
                   <div key={i} className="sync-marker" style={{ left: `${(m.time / totalDur) * 100}%` }}>
@@ -381,25 +406,16 @@ export default function ManualScreen({
               <div className="sync-time-total">/ {fmt(Math.ceil(totalDur))}</div>
             </div>
 
-            {/* Draggable timeline */}
             <div className="sync-timeline-track"
               style={{ marginBottom: 40 }}
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                const t = pct * totalDur;
-                setPlayTime(t);
-                offsetRef.current = t;
-                if (isPlaying) {
-                  try { sourceRef.current?.stop(); } catch {}
-                  cancelAnimationFrame(rafRef.current);
-                  setIsPlaying(false);
-                  setTimeout(() => playVoice(), 50);
-                }
+                handleSeek(pct * totalDur);
               }}
             >
-              <div className="sync-progress-fill" style={{ width: `${(playTime / totalDur) * 100}%` }} />
-              <div className="sync-playhead" style={{ left: `${(playTime / totalDur) * 100}%` }} />
+              <div className="sync-progress-fill" style={{ width: `${(playTime / totalDur) * 100}%`, transition: isPlaying ? 'none' : 'width 0.1s' }} />
+              <div className="sync-playhead" style={{ left: `${(playTime / totalDur) * 100}%`, transition: isPlaying ? 'none' : 'left 0.1s' }} />
 
               {/* Draggable markers */}
               {chordMarkers.map((m, i) => {
