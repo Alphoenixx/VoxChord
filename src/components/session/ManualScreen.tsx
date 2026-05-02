@@ -86,7 +86,18 @@ export default function ManualScreen({
     }
     const src = audioContext.createBufferSource();
     src.buffer = tempManualData.audioBuffer;
-    src.connect(audioContext.destination);
+    
+    // Master Limiter to prevent distortion/clipping if played rapidly
+    const limiter = audioContext.createDynamicsCompressor();
+    limiter.threshold.value = -1.0; 
+    limiter.knee.value = 40;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0;
+    limiter.release.value = 0.25;
+    limiter.connect(audioContext.destination);
+
+    src.connect(limiter);
+    
     src.onended = () => {
       cancelAnimationFrame(rafRef.current);
       setIsPlaying(false);

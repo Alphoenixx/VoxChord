@@ -35,7 +35,13 @@ export class AudioEngine {
       };
 
       this.source.connect(this.workletNode);
-      this.workletNode.connect(this.ctx.destination); // Required for processing to happen
+      
+      // Connect to a muted gain node instead of destination directly
+      // This prevents the microphone from creating a feedback loop while still forcing the browser to process the worklet.
+      const dummyGain = this.ctx.createGain();
+      dummyGain.gain.value = 0;
+      this.workletNode.connect(dummyGain);
+      dummyGain.connect(this.ctx.destination);
 
       return this.getLatency();
     } catch (err) {

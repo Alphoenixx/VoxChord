@@ -27,10 +27,12 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
 
   const playbackRef = useRef<PlaybackEngine | null>(null);
   const rafRef = useRef<number>(0);
+  const masterLimiterRef = useRef<DynamicsCompressorNode | null>(null);
   const voiceGainRef = useRef<GainNode | null>(null);
   const chordGainRef = useRef<GainNode | null>(null);
   const shimmerBuffersRef = useRef<Map<string, AudioBuffer>>(new Map());
   const activeShimmerRef = useRef<AudioBufferSourceNode | null>(null);
+  const shimmerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const candidate = phrase.candidates[phrase.selectedCandidate];
   const timeline = candidate?.chordTimeline ?? [];
@@ -68,17 +70,31 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
 
   /* ── Gain nodes for independent volume ── */
   useEffect(() => {
+    // Master Limiter to prevent distortion/clipping
+    const limiter = audioContext.createDynamicsCompressor();
+    limiter.threshold.value = -1.0; // Start compressing at -1dB
+    limiter.knee.value = 40;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0;
+    limiter.release.value = 0.25;
+    limiter.connect(audioContext.destination);
+    masterLimiterRef.current = limiter;
+
     const vGain = audioContext.createGain();
     vGain.gain.value = voiceVol;
-    vGain.connect(audioContext.destination);
+    vGain.connect(limiter);
     voiceGainRef.current = vGain;
 
     const cGain = audioContext.createGain();
     cGain.gain.value = chordVol;
-    cGain.connect(audioContext.destination);
+    cGain.connect(limiter);
     chordGainRef.current = cGain;
 
-    return () => { vGain.disconnect(); cGain.disconnect(); };
+    return () => { 
+      vGain.disconnect(); 
+      cGain.disconnect(); 
+      limiter.disconnect();
+    };
   }, [audioContext]);
 
   useEffect(() => {
@@ -94,28 +110,45 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
     const buffer = shimmerBuffersRef.current.get(chordDisplay);
     if (!buffer) return;
 
-    // Fade out previous
+    // Clear any pending shimmer starts
+    if (shimmerTimeoutRef.current) {
+      clearTimeout(shimmerTimeoutRef.current);
+    }
+
+    // Fade out previous shimmer
     if (activeShimmerRef.current) {
       try {
         const prev = activeShimmerRef.current;
         const fadeGain = audioContext.createGain();
-        fadeGain.gain.value = 1;
-        fadeGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + SHIMMER_FADEOUT_MS / 1000);
+        fadeGain.gain.setValueAtTime(1, audioContext.currentTime);
+        fadeGain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + SHIMMER_FADEOUT_MS / 1000);
+        
         prev.disconnect();
         prev.connect(fadeGain).connect(chordGainRef.current!);
-        setTimeout(() => { try { prev.stop(); } catch {} }, SHIMMER_FADEOUT_MS);
+        
+        setTimeout(() => { 
+          try { prev.stop(); prev.disconnect(); } catch {} 
+        }, SHIMMER_FADEOUT_MS);
       } catch {}
+      activeShimmerRef.current = null;
     }
 
     // Schedule new shimmer after gap
-    setTimeout(() => {
+    shimmerTimeoutRef.current = setTimeout(() => {
       if (!chordGainRef.current) return;
       const source = audioContext.createBufferSource();
       source.buffer = buffer;
       source.connect(chordGainRef.current);
+      
+      // Calculate duration to prevent overlapping into next chord
       const playDur = Math.max(0.3, chordDuration - (SHIMMER_FADEOUT_MS + SHIMMER_GAP_MS) / 1000);
-      source.start(0, SHIMMER_OFFSET_S, playDur);
-      activeShimmerRef.current = source;
+      
+      try {
+        source.start(audioContext.currentTime, SHIMMER_OFFSET_S, playDur);
+        activeShimmerRef.current = source;
+      } catch (e) {
+        console.error("Failed to start shimmer source", e);
+      }
     }, SHIMMER_GAP_MS);
   }, [audioContext]);
 
@@ -163,12 +196,28 @@ export default function ResultsScreen({ phrase, audioContext, onResing }: Result
   const handleScrub = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const seekTime = pos * duration;
+
+    // 1. Update UI state immediately for responsiveness
     setPlaybackPos(pos);
+    
+    // 2. Find and update active chord immediately so display doesn't jump
+    let activeIdx = 0;
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      if (timeline[i].time <= seekTime) {
+        activeIdx = i;
+        break;
+      }
+    }
+    setActiveChordIdx(activeIdx);
+
+    // 3. Update audio engine
     if (playbackRef.current && isPlaying) {
-      playbackRef.current.seek(pos * duration);
+      cancelAnimationFrame(rafRef.current);
+      playbackRef.current.seek(seekTime);
       startLoop();
     }
-  }, [isPlaying, duration, startLoop]);
+  }, [isPlaying, duration, timeline, startLoop]);
 
   const fmt = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 

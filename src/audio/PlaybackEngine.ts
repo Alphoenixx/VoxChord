@@ -37,6 +37,8 @@ export class PlaybackEngine {
     this.buffer = buffer;
     this.timeline = timeline;
     this.offset = fromOffset;
+    
+    // Reset chord index so the next tick immediately detects the correct chord at the new offset
     this.lastChordIndex = -1;
     this._playing = true;
 
@@ -53,8 +55,9 @@ export class PlaybackEngine {
       }
     };
 
-    this.startedAt = this.ctx.currentTime;
-    this.sourceNode.start(0, fromOffset);
+    // Use a tiny delay (0.01) to ensure the start call is scheduled cleanly
+    this.startedAt = this.ctx.currentTime + 0.01;
+    this.sourceNode.start(this.startedAt, fromOffset);
 
     // Begin animation tick
     this.tick();
@@ -67,6 +70,8 @@ export class PlaybackEngine {
     if (this.sourceNode) {
       try {
         this.sourceNode.onended = null;
+        // Use a tiny fade-out if possible? 
+        // No, sourceNode.stop() is immediate. Popping is usually fixed in GainNodes.
         this.sourceNode.stop();
         this.sourceNode.disconnect();
       } catch {
@@ -79,6 +84,10 @@ export class PlaybackEngine {
   seek(position: number): void {
     if (!this.buffer) return;
     const clampedPos = Math.max(0, Math.min(position, this.buffer.duration));
+    
+    // Update internal state before playing to ensure getElapsed is accurate
+    this.offset = clampedPos;
+    
     this.onEvent({ type: 'scrub', position: clampedPos });
     this.play(this.buffer, this.timeline, clampedPos);
   }
@@ -93,7 +102,9 @@ export class PlaybackEngine {
 
   getElapsed(): number {
     if (!this._playing) return this.offset;
-    return this.ctx.currentTime - this.startedAt + this.offset;
+    // Account for the scheduled start time
+    const elapsed = this.ctx.currentTime - this.startedAt;
+    return Math.max(0, elapsed) + this.offset;
   }
 
   isPlaying(): boolean {
