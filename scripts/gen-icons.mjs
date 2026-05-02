@@ -10,14 +10,14 @@ if (!fs.existsSync('public/screenshots')) {
 
 const sizes = [192, 512]
 for (const s of sizes) {
-  await sharp('src/assets/icon.svg')
+  await sharp('image.png')
     .resize(s, s)
     .png()
     .toFile(`public/icons/icon-${s}.png`)
 }
 
 // Maskable icon: logo must fit inside 80% safe zone — add padding
-await sharp('src/assets/icon.svg')
+await sharp('image.png')
   .resize(410, 410)
   .extend({ top: 51, bottom: 51, left: 51, right: 51, background: '#0a0a0f' })
   .resize(512, 512)

@@ -1,0 +1,54 @@
+{
+  "packageId": "com.voxchord.app",
+  "host": "vox-chord-kappa.vercel.app",
+  "name": "VoxChord",
+  "launcherName": "VoxChord",
+  "display": "standalone",
+  "themeColor": "#7C3AED",
+  "themeColorDark": "#000000",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#0A0A0F",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://vox-chord-kappa.vercel.app/icons/icon-512.png",
+  "maskableIconUrl": "https://vox-chord-kappa.vercel.app/icons/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "C:\\Users\\ankan\\Desktop\\Academics\\VoxChord\\android\\android.keystore",
+    "alias": "voxchord"
+  },
+  "appVersionName": "1",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://vox-chord-kappa.vercel.app/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {
+    "playBilling": {
+      "enabled": true
+    },
+    "locationDelegation": {
+      "enabled": true
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://vox-chord-kappa.vercel.app/",
+  "minSdkVersion": 21,
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "launchHandlerClientMode": "",
+  "displayOverride": [],
+  "appVersion": "1"
+}
